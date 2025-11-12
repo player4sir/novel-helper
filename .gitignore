@@ -6,6 +6,7 @@ dist
 
 # Electron
 release/
+release-new/
 out/
 
 # Build artifacts
