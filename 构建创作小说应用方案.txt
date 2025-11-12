@@ -1,0 +1,142 @@
+### 概要
+完整、改进后的端到端方案，专注于“AI 驱动创建小说项目并支撑写作流程”的核心功能：ProjectMeta → 卷纲 → 章纲 → SceneFrame → 增量草稿（Draft）→ 章节润色（Polish）→ 连贯性检测 → 最小修复。目标：保证结构严谨、上下文一致、最低高成本模型调用与 token 消耗、所有 AI 调用可回溯与可审计。方案包含数据模型、模块化 Prompt 与打包器、路由策略、关键伪代码、LangChain 集成建议与必需接口契约，供直接实现。
+
+---
+
+### 设计原则与约束
+- 最少高成本调用：小模型+规则器承担绝大多数生成与校验，仅在明确需求（润色、复杂修正）时调用大模型。  
+- 增量与分片：以 SceneFrame 为最小单元，活动写作窗口惰性加载；不传输全文，上下文以摘要/实体状态替代。  
+- 模块化 Prompt：System / ProjectSummary / SceneOneLiner / Entities / AdjacentSummaries / Constraints / OutputSchema 分模块版本化。  
+- PromptPacking（token 预算器）：按优先级填充并压缩模块（原文→摘要→state-vector→content-hash），记录 metadata 以便回溯。  
+- 最小修复优先：自动化仅在「最低代价且低风险」条件下应用；否则生成候选并等待人工确认。  
+- 可回溯审计：每次 PromptExecution 保存 template_id、prompt_hash、metadata、model_id、response_hash、tokens_used、timestamp（支持 manifest 签名/时间戳）。
+
+---
+
+### 精简数据模型（JSON 风格字段）
+- ProjectMeta: {id, title_seed, premise, theme_tags[], tone_profile, core_conflicts[], main_entities[] }  
+- Entity: {id, project_id, name, role, short_motivation, arc_points[], embedding, last_mentioned:{volume,chapter,scene}}  
+- Volume: {id, project_id, title_line, beats[]}  
+- ChapterSkeleton: {id, volume_id, index, one_liner, beats[], required_entities[], stakes_delta}  
+- SceneFrame: {id, chapter_id, index, purpose, entry_state_summary, exit_state_summary, tokens_estimate}  
+- DraftChunk: {id, scene_id, content, mentions[], local_summary, created_from_exec_id}  
+- PromptExecution: {execution_id, template_id, template_version, prompt_hash, prompt_metadata:{modules:[{id,status,compression_type,source_hash}]}, model_id, model_version, params, response_hash, response_summary, tokens_used, timestamp, signature}  
+- DocDelta: {id, base_version_id, patch_ops[], created_at, created_by}
+
+---
+
+### 核心流程与关键算法（含伪码要点）
+1. ProjectMeta 生成（一次短调用）  
+   - 输入 seed/title；用大模型或强小模型生成若干候选 ProjectMeta，向量化打分并合并输出稳定 ProjectMeta。  
+
+2. 卷纲与章纲（多假设并合并）  
+   - 卷纲：小模型并行生成每卷一句话定位，多候选快速评分（主题覆盖、递进性、可写性）后合并。  
+   - 章纲：按卷 beat 拆解为章 one_liner 与 beats，标注 required_entities 与 stakes_delta，记录 last_mentioned_pos。  
+
+3. SceneFrame 分解  
+   - 每章按功能单元拆为 SceneFrame；为每帧计算 entry/exit state、focal_entities、tokens_estimate。  
+
+4. PromptPacking（动态预算器）——伪码要点  
+   - 输入 modules（按 MustHave→Important→Optional）与 max_budget（tokens）。  
+   - 逐模块尝试加入；超预算时按顺序压缩为摘要/state-vector/content-hash；记录 metadata.omitted。  
+   - 输出 {prompt_text, metadata, tokens_used, semantic_signature}。  
+
+   pack_prompt 伪码（要点）
+   - 尝试加入模块；若超预算调用 m.compress_best_fit(remaining_budget)；若仍超则标记 omitted 并记录 source_hash。
+
+5. 自动模型路由（评分公式与伪码）  
+   - 信号：draft_confidence ∈ [0,1], conflict_density (conflicts/1k tokens), template_complexity ∈ [0,1], budget_factor ∈ [0,1]。  
+   - 评分：score = 0.45*(1 - draft_confidence) + 0.30*conflict_density + 0.15*template_complexity - 0.10*budget_factor。  
+   - 阈值：mid=0.35, high=0.65。  
+   - 决策：score ≤ mid → SMALL_MODEL；mid < score ≤ high → SMALL_MODEL_WITH_FALLBACK；score > high → BIG_MODEL（需成本许可）。  
+
+6. 增量 Draft 流程（单场景）——伪码要点
+   - modules = [system_role, project_summary, scene_one_liner, required_entities, adjacent_summaries, constraints]  
+   - packed = pack_prompt(modules, max_budget) → log PromptExecution (prompt_hash, metadata)  
+   - resp = small_model.generate(packed.prompt) → run_rule_checks(resp.text)  
+   - 若规则器失败并 route_call(signals) == BIG_MODEL → 升级重调用；否则存 DraftChunk、更新 Entity.last_mentioned 并记录 PromptExecution。  
+
+7. 章节润色（Polish Pass）
+   - 合并章节 DraftChunks → merged_summary；构造 packed prompt（include style_card, recent_entity_states, mandatory_constraints）  
+   - 调用 BIG_MODEL（尽量一次完成章节润色），输出 polished_text + change_log；保存 PromptExecution manifest。  
+
+8. 连贯性检测（规则器 + 语义小模型）
+   - 规则器：检测命名不一致、显式时间线冲突、明显重复（快速）。  
+   - 小模型：检测隐性矛盾、动机漂移、伏笔丢失（返回 confidence 与 evidence_snippets）。  
+   - 若发现冲突生成 conflict list：{conflict_id,type,severity,affected_scenes,evidence_snippets}。  
+
+9. 最小修复引擎（状态机与准则）  
+   - 生成候选：LocalInsert / LocalRewrite / StructuralRewrite；为每候选估算 token_cost 与 risk_score。  
+   - 自动应用条件：token_cost ≤ AUTO_BUDGET_THRESHOLD AND risk_score ≤ AUTO_RISK_THRESHOLD（默认 AUTO_BUDGET_THRESHOLD = 0.5 × average_polish_cost；AUTO_RISK_THRESHOLD = 0.25）。  
+   - 若自动应用则记录 revert_point（DocDelta）并保存 PromptExecution；否则返回候选供人工确认。  
+
+---
+
+### Prompt 模板示例（核心四类）
+- ProjectMeta Template：输出 {title, premise, main_entities[], core_conflicts[], world_rules[], keywords[]}。  
+- Volume/Chapter Skeleton Template：输入卷定位与 ProjectMetaSummary，输出 {chapter_index, one_liner, beats[], required_entities[]}。  
+- Scene Draft Template（pack 使用）：System Role + ProjectSummary + SceneOneLiner + RequiredEntities + AdjacentSummaries + Constraints → 输出 {natural_draft, mentions[], scene_notes[]}.  
+- Polish Template：merged_chapter_summary + style_card + recent_entity_states + mandatory_constraints → 输出 {polished_text, change_log}。
+
+（模板在实现时按模块化 PromptTemplate 存储并版本化）
+
+---
+
+### LangChain 集成策略（如何增强实现）
+- 把每个 PromptTemplate 对应为 LangChain PromptTemplate；用 pack_prompt 生成最终 prompt_text 再作为 LLMChain 的 prompt。  
+- RouterChain 实现自动模型路由（RouterChain 根据 score 选择 small/big/fallback branch）。  
+- 使用 Retriever（VectorStore）缓存 EntityEntry embedding 与 recent summaries，pack_prompt 可引用检索结果代替全文。  
+- 使用 LangChain cache 与自定义 short-verification tool 实现缓存命中后的回验（10–30 token 快速检查）。  
+- 在每个 chain 调用前后用统一 log_exec wrapper 记录 PromptExecution manifest（prompt_hash、modules metadata、tokens_used、response_hash）。  
+- 将规则器实现为 deterministic Tool 或轻量 chain，优先运行以减少 LLM 调用。
+
+---
+
+### 接口契约（仅创作功能，概念级）
+- create_project(seed) → {project_meta, execution_id}  
+- generate_volumes(project_id, candidate_count) → {volumes[], execution_ids[]}  
+- generate_chapters(project_id, volume_id, expected_chapters) → {chapter_skeletons[], execution_ids[]}  
+- generate_scene_draft(project_id, chapter_id, scene_index, scene_one_liner, adjacent_summaries, required_entities, max_budget) → {execution_id, draft_id, tokens_used, semantic_signature}  
+- polish_chapter(project_id, chapter_id, polish_level, max_budget) → {execution_id, polished_id, tokens_used, manifest}  
+- detect_conflicts(project_id, chapter_id) → {conflicts[]}  
+- propose_fixes(project_id, conflict_id, max_budget) → {candidates[]}  
+- apply_fix(project_id, candidate_id) → {applied:Boolean, new_draft_id, tokens_used}
+
+每次响应必须返回 execution_id 与 tokens_used，并保存 PromptExecution manifest 以便回溯审计。
+
+---
+
+### 缓存、签名与回验策略（要点）
+- 缓存键 = SHA256(template_id || normalized_vars || semantic_signature)。  
+- semantic_signature：对 packed prompt 计算短嵌入向量（例如 128-d）；命中需 cosine_similarity ≥ 0.95。  
+- 命中后运行短回验（10–30 token 小模型或 deterministic check），回验失败视为未命中并重新生成。  
+- PromptExecution manifest 支持 signature 与外部时间戳锚定（可选）用于法律级证据保全。
+
+---
+
+### 评估指标（功能相关目标）
+- Calls per Chapter ≤ 3（Draft + Polish + OptionalFix）  
+- Tokens per 1k Words：持续下降（目标每月优化 5–10%）  
+- Draft Acceptance Rate ≥ 60%  
+- AutoApply Acceptance Rate ≥ 70%  
+- Conflict Detection False Positive ≤ 5%  
+- Cache Hit Precision ≥ 98%
+
+---
+
+### 风险点与防护（仅功能相关）
+- 上下文压缩丢失细节：保留 adjacent_summaries 与 entity_state；若冲突严重允许回溯更多上下文重算。  
+- 缓存误命中：高阈值 + 短回验；错误发生时记录样本用于优化签名策略。  
+- 自动修复链式影响：严格最小修复优先、成本与风险估算、必须记录 revert_point 并允许回退。  
+- 结构化输出压抑表达：采用双通道输出（自然稿 + 结构化 metadata）。
+
+---
+
+### 可交付实现清单（建议首批实现）
+- pack_prompt 实现（模块化 Prompt + 动态压缩 + metadata）  
+- DraftChain（小模型）+ RuleCheck（deterministic）+ RouterChain（路由器）  
+- PromptExecution manifest logger（包含 tokens 计数）  
+- PolishChain（章节级）与最小修复引擎（候选生成、cost/risk 估算）  
+- VectorStore Retriever（entity & recent-summary）与缓存回验工具
+
+---

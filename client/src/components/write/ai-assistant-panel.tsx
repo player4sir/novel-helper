@@ -5,8 +5,9 @@ import {
   Wand2,
   MessageSquare,
   Zap,
-  Settings,
   RefreshCw,
+  Copy,
+  ArrowDownToLine,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,8 +24,9 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { AIModel, PromptTemplate } from "@shared/schema";
+import type { AIModel, PromptTemplate, Outline, Character } from "@shared/schema";
 
 interface AIAssistantPanelProps {
   projectId: string;
@@ -35,6 +37,7 @@ export function AIAssistantPanel({
   projectId,
   chapterId,
 }: AIAssistantPanelProps) {
+  const { toast } = useToast();
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [temperature, setTemperature] = useState([0.7]);
   const [maxTokens, setMaxTokens] = useState([2000]);
@@ -49,15 +52,84 @@ export function AIAssistantPanel({
     queryKey: ["/api/prompt-templates", projectId],
   });
 
+  // Fetch chapter outline for context
+  const { data: outline } = useQuery<Outline>({
+    queryKey: ["/api/outlines", projectId, chapterId],
+    queryFn: async () => {
+      if (!chapterId) return null;
+      const res = await fetch(`/api/outlines?projectId=${projectId}`);
+      if (!res.ok) return null;
+      const outlines = await res.json();
+      return outlines.find((o: Outline) => o.linkedChapterId === chapterId);
+    },
+    enabled: !!chapterId,
+  });
+
+  // Fetch characters for context
+  const { data: characters } = useQuery<Character[]>({
+    queryKey: ["/api/characters", projectId],
+    queryFn: async () => {
+      const res = await fetch(`/api/characters?projectId=${projectId}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
   const generateMutation = useMutation({
     mutationFn: async (data: {
       prompt: string;
       modelId: string;
       parameters: { temperature: number; maxTokens: number };
     }) => {
-      return await apiRequest("POST", "/api/ai/generate", data);
+      // Build contextual prompt with chapter outline and character info
+      let contextualPrompt = data.prompt;
+      
+      if (chapterId && outline) {
+        const plotNodes = outline.plotNodes as any;
+        const contextParts: string[] = [];
+        
+        // Add chapter beats
+        if (plotNodes?.beats && Array.isArray(plotNodes.beats)) {
+          contextParts.push(`【章节节拍】\n${plotNodes.beats.map((b: string, i: number) => `${i + 1}. ${b}`).join('\n')}`);
+        }
+        
+        // Add required entities
+        if (plotNodes?.requiredEntities && Array.isArray(plotNodes.requiredEntities)) {
+          contextParts.push(`【必需角色】\n${plotNodes.requiredEntities.join('、')}`);
+        }
+        
+        // Add entry/exit states
+        if (plotNodes?.entryState) {
+          contextParts.push(`【入场状态】\n${plotNodes.entryState}`);
+        }
+        if (plotNodes?.exitState) {
+          contextParts.push(`【出场状态】\n${plotNodes.exitState}`);
+        }
+        
+        // Add stakes delta
+        if (plotNodes?.stakesDelta) {
+          contextParts.push(`【风险变化】\n${plotNodes.stakesDelta}`);
+        }
+        
+        if (contextParts.length > 0) {
+          contextualPrompt = `${contextParts.join('\n\n')}\n\n【用户需求】\n${data.prompt}`;
+        }
+      }
+      
+      // Add character information
+      if (characters && characters.length > 0) {
+        const charInfo = characters.slice(0, 5).map((c) => 
+          `${c.name}（${c.role}）：${c.personality || '暂无描述'}`
+        ).join('\n');
+        contextualPrompt += `\n\n【角色信息】\n${charInfo}`;
+      }
+      
+      return await apiRequest("POST", "/api/ai/generate", {
+        ...data,
+        prompt: contextualPrompt,
+      });
     },
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       setGeneratedContent(data.content);
     },
   });
@@ -66,7 +138,7 @@ export function AIAssistantPanel({
   const rewriteTemplates = templates?.filter((t) => t.category === "rewrite") || [];
 
   const activeModels = aiModels?.filter((m) => m.isActive) || [];
-  const defaultModel = activeModels.find((m) => m.isDefault) || activeModels[0];
+  const defaultModel = activeModels.find((m) => m.isDefaultChat) || activeModels[0];
 
   if (!selectedModel && defaultModel) {
     setSelectedModel(defaultModel.id);
@@ -131,7 +203,7 @@ export function AIAssistantPanel({
                   <SelectItem key={model.id} value={model.id}>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{model.name}</span>
-                      {model.isDefault && (
+                      {model.isDefaultChat && (
                         <Badge variant="secondary" className="text-xs">
                           默认
                         </Badge>
@@ -232,14 +304,46 @@ export function AIAssistantPanel({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs text-muted-foreground">生成结果</Label>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6"
-                      onClick={() => setGeneratedContent("")}
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6"
+                        onClick={() => {
+                          navigator.clipboard.writeText(generatedContent);
+                          toast({
+                            title: "已复制",
+                            description: "内容已复制到剪贴板",
+                          });
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('insertAIContent', {
+                            detail: { content: generatedContent }
+                          }));
+                          toast({
+                            title: "已插入",
+                            description: "内容已插入到编辑器",
+                          });
+                        }}
+                      >
+                        <ArrowDownToLine className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6"
+                        onClick={() => setGeneratedContent("")}
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="p-3 bg-muted rounded-md text-sm leading-relaxed max-h-60 overflow-y-auto">
                     {generatedContent}
@@ -316,7 +420,41 @@ export function AIAssistantPanel({
 
             {generatedContent && (
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">生成结果</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">生成结果</Label>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      onClick={() => {
+                        navigator.clipboard.writeText(generatedContent);
+                        toast({
+                          title: "已复制",
+                          description: "内容已复制到剪贴板",
+                        });
+                      }}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent('insertAIContent', {
+                          detail: { content: generatedContent }
+                        }));
+                        toast({
+                          title: "已插入",
+                          description: "内容已插入到编辑器",
+                        });
+                      }}
+                    >
+                      <ArrowDownToLine className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
                 <div className="p-3 bg-muted rounded-md text-sm leading-relaxed max-h-60 overflow-y-auto">
                   {generatedContent}
                 </div>

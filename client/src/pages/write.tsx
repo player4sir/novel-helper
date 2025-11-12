@@ -7,8 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChapterSidebar } from "@/components/write/chapter-sidebar";
 import { EditorPanel } from "@/components/write/editor-panel";
 import { AIAssistantPanel } from "@/components/write/ai-assistant-panel";
+import { SceneDetailsPanel } from "@/components/write/scene-details-panel";
+import { CacheStatsPanel } from "@/components/write/cache-stats-panel";
 import { ProjectSelector } from "@/components/write/project-selector";
 import { NewProjectDialog } from "@/components/write/new-project-dialog";
+import { GenerateContentButton } from "@/components/write/generate-content-button";
 import type { Project, Chapter } from "@shared/schema";
 
 export default function Write() {
@@ -44,7 +47,7 @@ export default function Write() {
         </div>
 
         <div className="flex items-center gap-2">
-          {selectedChapter && (
+          {selectedChapter && selectedProjectId && (
             <>
               <div className="text-sm text-muted-foreground px-3 py-1.5 rounded-md bg-muted">
                 <span className="font-medium" data-testid="text-chapter-word-count">
@@ -52,6 +55,17 @@ export default function Write() {
                 </span>{" "}
                 字
               </div>
+              {(!selectedChapter.content || selectedChapter.content.length < 100) && (
+                <GenerateContentButton
+                  projectId={selectedProjectId}
+                  chapterId={selectedChapter.id}
+                  chapterTitle={selectedChapter.title}
+                  onSuccess={() => {
+                    // 生成成功后，章节数据会通过 invalidateQueries 自动刷新
+                    // 无需额外操作，React Query 会自动重新获取数据
+                  }}
+                />
+              )}
               <Button variant="ghost" size="sm" data-testid="button-save-chapter">
                 <Save className="h-4 w-4 mr-2" />
                 保存
@@ -79,11 +93,34 @@ export default function Write() {
               chapter={selectedChapter}
             />
 
-            {/* Right: AI Assistant */}
-            <AIAssistantPanel
-              projectId={selectedProject.id}
-              chapterId={selectedChapterId}
-            />
+            {/* Right: Panels */}
+            <div className="w-80 border-l border-border flex flex-col">
+              <Tabs defaultValue="assistant" className="flex-1 flex flex-col">
+                <TabsList className="grid w-full grid-cols-3 mx-4 mt-4">
+                  <TabsTrigger value="assistant">AI助手</TabsTrigger>
+                  <TabsTrigger value="scenes">场景</TabsTrigger>
+                  <TabsTrigger value="stats">统计</TabsTrigger>
+                </TabsList>
+                <TabsContent value="assistant" className="flex-1 mt-0">
+                  <AIAssistantPanel
+                    projectId={selectedProject.id}
+                    chapterId={selectedChapterId}
+                  />
+                </TabsContent>
+                <TabsContent value="scenes" className="flex-1 mt-0">
+                  {selectedChapterId ? (
+                    <SceneDetailsPanel chapterId={selectedChapterId} />
+                  ) : (
+                    <div className="p-4 text-center text-sm text-muted-foreground">
+                      请先选择章节
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="stats" className="flex-1 mt-0 p-4 space-y-4">
+                  <CacheStatsPanel />
+                </TabsContent>
+              </Tabs>
+            </div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">

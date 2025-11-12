@@ -12,8 +12,12 @@ import Dashboard from "@/pages/dashboard";
 import Write from "@/pages/write";
 import Outlines from "@/pages/outlines";
 import Characters from "@/pages/characters";
+import WorldSettings from "@/pages/world-settings";
+import PlotCards from "@/pages/plot-cards";
 import AIModels from "@/pages/ai-models";
+import PromptTemplates from "@/pages/prompt-templates";
 import Statistics from "@/pages/statistics";
+import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -23,8 +27,12 @@ function Router() {
       <Route path="/write" component={Write} />
       <Route path="/outlines" component={Outlines} />
       <Route path="/characters" component={Characters} />
+      <Route path="/world" component={WorldSettings} />
+      <Route path="/plots" component={PlotCards} />
       <Route path="/ai-models" component={AIModels} />
+      <Route path="/templates" component={PromptTemplates} />
       <Route path="/statistics" component={Statistics} />
+      <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
   );

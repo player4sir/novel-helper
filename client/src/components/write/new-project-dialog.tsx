@@ -88,7 +88,7 @@ export function NewProjectDialog({
     mutationFn: async (values: z.infer<typeof formSchema>) => {
       return await apiRequest("POST", "/api/projects", values);
     },
-    onSuccess: (data) => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       form.reset();
       setError(null);

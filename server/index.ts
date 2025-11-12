@@ -1,8 +1,23 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { loadEnvironmentVariables, validateEnvironment, printDiagnostics } from "./startup-wrapper";
 
 const app = express();
+
+// CORS 配置 - 允许移动端访问
+app.use(cors({
+  origin: process.env.NODE_ENV === "production" 
+    ? [
+        /\.zeabur\.app$/,  // Zeabur 域名
+        /capacitor:\/\//,  // Capacitor 应用
+        /http:\/\/localhost/,  // 本地开发
+      ]
+    : true,  // 开发环境允许所有来源
+  credentials: true,
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -37,6 +52,20 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  try {
+    // 加载环境变量
+    await loadEnvironmentVariables();
+    
+    // 打印诊断信息
+    printDiagnostics();
+    
+    // 验证必需的环境变量
+    validateEnvironment();
+  } catch (err) {
+    console.error("✗ Startup failed:", err);
+    process.exit(1);
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -61,11 +90,7 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
   });
 })();

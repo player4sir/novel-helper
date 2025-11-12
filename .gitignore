@@ -1,6 +1,13 @@
 node_modules
 dist
+.env
 .DS_Store
-server/public
-vite.config.ts.*
-*.tar.gz
+*.log
+
+# Electron
+release/
+out/
+
+# Build artifacts
+dist-electron/
+*.tsbuildinfo

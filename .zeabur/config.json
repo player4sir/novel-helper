@@ -1,0 +1,15 @@
+{
+  "name": "novel-helper",
+  "region": "ap-east-1",
+  "services": [
+    {
+      "name": "novel-helper-api",
+      "type": "nodejs",
+      "buildCommand": "npm run build",
+      "startCommand": "npm run start",
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  ]
+}

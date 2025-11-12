@@ -1,0 +1,59 @@
+{
+  "appId": "com.novelwriter.app",
+  "productName": "小说创作助手",
+  "directories": {
+    "output": "release-new",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "node_modules/**/*",
+    "package.json",
+    "!node_modules/.cache",
+    "!node_modules/.vite",
+    "!node_modules/**/*.md",
+    "!node_modules/**/LICENSE*",
+    "!node_modules/**/*.map"
+  ],
+  "asarUnpack": [
+    "node_modules/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "migrations",
+      "to": "migrations"
+    },
+    {
+      "from": ".env",
+      "to": ".env"
+    }
+  ],
+
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${version}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "小说创作助手"
+  },
+  "mac": {
+    "target": ["dmg"],
+    "icon": "attached_assets/icon.png",
+    "category": "public.app-category.productivity"
+  },
+  "linux": {
+    "target": ["AppImage"],
+    "icon": "attached_assets/icon.png",
+    "category": "Office"
+  }
+}

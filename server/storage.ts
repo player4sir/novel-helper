@@ -11,6 +11,14 @@ import {
   plotCards,
   generationHistory,
   statistics,
+  promptExecutions,
+  sceneFrames,
+  draftChunks,
+  chapterPolishHistory,
+  coherenceIssues,
+  docDeltas,
+  characterStateHistory,
+  semanticSignatures,
   type Project,
   type InsertProject,
   type Volume,
@@ -33,9 +41,21 @@ import {
   type InsertGenerationHistory,
   type Statistic,
   type InsertStatistic,
+  type PromptExecution,
+  type InsertPromptExecution,
+  type SceneFrame,
+  type InsertSceneFrame,
+  type DraftChunk,
+  type InsertDraftChunk,
+  type ChapterPolishHistory,
+  type InsertChapterPolishHistory,
+  type CoherenceIssue,
+  type InsertCoherenceIssue,
+  type DocDelta,
+  type InsertDocDelta,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, isNull } from "drizzle-orm";
+import { eq, desc, and, isNull, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Projects
@@ -71,6 +91,7 @@ export interface IStorage {
   // World Settings
   getWorldSettingsByProject(projectId: string): Promise<WorldSetting[]>;
   createWorldSetting(setting: InsertWorldSetting): Promise<WorldSetting>;
+  updateWorldSetting(id: string, updates: Partial<InsertWorldSetting>): Promise<WorldSetting>;
   deleteWorldSetting(id: string): Promise<void>;
 
   // AI Models
@@ -84,11 +105,13 @@ export interface IStorage {
   // Prompt Templates
   getPromptTemplates(projectId?: string): Promise<PromptTemplate[]>;
   createPromptTemplate(template: InsertPromptTemplate): Promise<PromptTemplate>;
+  updatePromptTemplate(id: string, updates: Partial<InsertPromptTemplate>): Promise<PromptTemplate>;
   deletePromptTemplate(id: string): Promise<void>;
 
   // Plot Cards
   getPlotCards(projectId?: string): Promise<PlotCard[]>;
   createPlotCard(card: InsertPlotCard): Promise<PlotCard>;
+  updatePlotCard(id: string, updates: Partial<InsertPlotCard>): Promise<PlotCard>;
   deletePlotCard(id: string): Promise<void>;
 
   // Generation History
@@ -98,6 +121,57 @@ export interface IStorage {
   // Statistics
   getStatisticsByProject(projectId: string): Promise<Statistic[]>;
   createStatistic(statistic: InsertStatistic): Promise<Statistic>;
+
+  // Prompt Executions
+  getPromptExecutionsByProject(projectId: string): Promise<PromptExecution[]>;
+  createPromptExecution(execution: InsertPromptExecution): Promise<PromptExecution>;
+
+  // Scene Frames
+  getSceneFramesByChapter(chapterId: string): Promise<SceneFrame[]>;
+  getSceneFrame(id: string): Promise<SceneFrame | undefined>;
+  createSceneFrame(frame: InsertSceneFrame): Promise<SceneFrame>;
+  deleteSceneFramesByChapter(chapterId: string): Promise<void>;
+
+  // Draft Chunks
+  getDraftChunksByScene(sceneId: string): Promise<DraftChunk[]>;
+  getDraftChunk(id: string): Promise<DraftChunk | undefined>;
+  createDraftChunk(chunk: InsertDraftChunk): Promise<DraftChunk>;
+  deleteDraftChunksByScene(sceneId: string): Promise<void>;
+
+  // Chapter Polish History
+  getPolishHistoryByChapter(chapterId: string): Promise<ChapterPolishHistory[]>;
+  createPolishHistory(history: InsertChapterPolishHistory): Promise<ChapterPolishHistory>;
+
+  // Coherence Issues
+  getCoherenceIssuesByProject(projectId: string): Promise<CoherenceIssue[]>;
+  getCoherenceIssuesByChapter(chapterId: string): Promise<CoherenceIssue[]>;
+  createCoherenceIssue(issue: InsertCoherenceIssue): Promise<CoherenceIssue>;
+  updateCoherenceIssue(id: string, updates: Partial<InsertCoherenceIssue>): Promise<CoherenceIssue>;
+
+  // Document Deltas
+  getDocDeltasByChapter(chapterId: string): Promise<DocDelta[]>;
+  createDocDelta(delta: InsertDocDelta): Promise<DocDelta>;
+
+  // Character State History
+  getCharacterStateHistory(characterId: string): Promise<any[]>;
+  createCharacterStateHistory(history: any): Promise<any>;
+
+  // Semantic Signatures
+  findSimilarSignatures(templateId: string, signatureHash: string): Promise<any[]>;
+  createSemanticSignature(signature: any): Promise<any>;
+  updateSignatureUsage(signatureId: string): Promise<void>;
+
+  // Character Entity Tracking
+  getCharacter(id: string): Promise<Character | undefined>;
+  updateCharacter(id: string, updates: any): Promise<Character>;
+  updateCharacterTracking(
+    id: string,
+    updates: {
+      lastMentioned?: any;
+      mentionCount?: number;
+      firstAppearance?: any;
+    }
+  ): Promise<Character>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -266,6 +340,15 @@ export class DatabaseStorage implements IStorage {
     return setting;
   }
 
+  async updateWorldSetting(id: string, updates: Partial<InsertWorldSetting>): Promise<WorldSetting> {
+    const [setting] = await db
+      .update(worldSettings)
+      .set(updates)
+      .where(eq(worldSettings.id, id))
+      .returning();
+    return setting;
+  }
+
   async deleteWorldSetting(id: string): Promise<void> {
     await db.delete(worldSettings).where(eq(worldSettings.id, id));
   }
@@ -281,11 +364,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAIModel(insertModel: InsertAIModel): Promise<AIModel> {
-    if (insertModel.isDefault) {
+    // 如果设置为默认，先清除同类型的其他默认模型
+    if (insertModel.isDefaultChat) {
       await db
         .update(aiModels)
-        .set({ isDefault: false })
-        .where(eq(aiModels.isDefault, true));
+        .set({ isDefaultChat: false })
+        .where(and(eq(aiModels.modelType, "chat"), eq(aiModels.isDefaultChat, true)));
+    }
+    if (insertModel.isDefaultEmbedding) {
+      await db
+        .update(aiModels)
+        .set({ isDefaultEmbedding: false })
+        .where(and(eq(aiModels.modelType, "embedding"), eq(aiModels.isDefaultEmbedding, true)));
     }
 
     const [model] = await db
@@ -309,15 +399,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async setDefaultAIModel(id: string): Promise<void> {
-    await db
-      .update(aiModels)
-      .set({ isDefault: false })
-      .where(eq(aiModels.isDefault, true));
+    // 获取模型信息以确定类型
+    const [model] = await db.select().from(aiModels).where(eq(aiModels.id, id));
+    if (!model) {
+      throw new Error("Model not found");
+    }
 
-    await db
-      .update(aiModels)
-      .set({ isDefault: true })
-      .where(eq(aiModels.id, id));
+    // 根据模型类型清除对应的默认标记
+    if (model.modelType === "chat") {
+      await db
+        .update(aiModels)
+        .set({ isDefaultChat: false })
+        .where(and(eq(aiModels.modelType, "chat"), eq(aiModels.isDefaultChat, true)));
+
+      await db
+        .update(aiModels)
+        .set({ isDefaultChat: true })
+        .where(eq(aiModels.id, id));
+    } else if (model.modelType === "embedding") {
+      await db
+        .update(aiModels)
+        .set({ isDefaultEmbedding: false })
+        .where(and(eq(aiModels.modelType, "embedding"), eq(aiModels.isDefaultEmbedding, true)));
+
+      await db
+        .update(aiModels)
+        .set({ isDefaultEmbedding: true })
+        .where(eq(aiModels.id, id));
+    }
   }
 
   // Prompt Templates
@@ -343,6 +452,15 @@ export class DatabaseStorage implements IStorage {
     const [template] = await db
       .insert(promptTemplates)
       .values(insertTemplate)
+      .returning();
+    return template;
+  }
+
+  async updatePromptTemplate(id: string, updates: Partial<InsertPromptTemplate>): Promise<PromptTemplate> {
+    const [template] = await db
+      .update(promptTemplates)
+      .set(updates)
+      .where(eq(promptTemplates.id, id))
       .returning();
     return template;
   }
@@ -374,6 +492,15 @@ export class DatabaseStorage implements IStorage {
     const [card] = await db
       .insert(plotCards)
       .values(insertCard)
+      .returning();
+    return card;
+  }
+
+  async updatePlotCard(id: string, updates: Partial<InsertPlotCard>): Promise<PlotCard> {
+    const [card] = await db
+      .update(plotCards)
+      .set(updates)
+      .where(eq(plotCards.id, id))
       .returning();
     return card;
   }
@@ -429,6 +556,218 @@ export class DatabaseStorage implements IStorage {
       .values(insertStatistic)
       .returning();
     return statistic;
+  }
+
+  // Prompt Executions
+  async getPromptExecutionsByProject(projectId: string): Promise<PromptExecution[]> {
+    return await db
+      .select()
+      .from(promptExecutions)
+      .where(eq(promptExecutions.projectId, projectId))
+      .orderBy(desc(promptExecutions.timestamp));
+  }
+
+  async createPromptExecution(insertExecution: InsertPromptExecution): Promise<PromptExecution> {
+    const [execution] = await db
+      .insert(promptExecutions)
+      .values(insertExecution)
+      .returning();
+    return execution;
+  }
+
+  // Scene Frames
+  async getSceneFramesByChapter(chapterId: string): Promise<SceneFrame[]> {
+    return await db
+      .select()
+      .from(sceneFrames)
+      .where(eq(sceneFrames.chapterId, chapterId))
+      .orderBy(sceneFrames.index);
+  }
+
+  async getSceneFrame(id: string): Promise<SceneFrame | undefined> {
+    const [frame] = await db.select().from(sceneFrames).where(eq(sceneFrames.id, id));
+    return frame || undefined;
+  }
+
+  async createSceneFrame(frame: InsertSceneFrame): Promise<SceneFrame> {
+    const [created] = await db.insert(sceneFrames).values(frame).returning();
+    return created;
+  }
+
+  async deleteSceneFramesByChapter(chapterId: string): Promise<void> {
+    await db.delete(sceneFrames).where(eq(sceneFrames.chapterId, chapterId));
+  }
+
+  // Draft Chunks
+  async getDraftChunksByScene(sceneId: string): Promise<DraftChunk[]> {
+    return await db
+      .select()
+      .from(draftChunks)
+      .where(eq(draftChunks.sceneId, sceneId))
+      .orderBy(desc(draftChunks.createdAt));
+  }
+
+  async getDraftChunk(id: string): Promise<DraftChunk | undefined> {
+    const [chunk] = await db.select().from(draftChunks).where(eq(draftChunks.id, id));
+    return chunk || undefined;
+  }
+
+  async createDraftChunk(chunk: InsertDraftChunk): Promise<DraftChunk> {
+    const [created] = await db.insert(draftChunks).values(chunk).returning();
+    return created;
+  }
+
+  async deleteDraftChunksByScene(sceneId: string): Promise<void> {
+    await db.delete(draftChunks).where(eq(draftChunks.sceneId, sceneId));
+  }
+
+  // Chapter Polish History
+  async getPolishHistoryByChapter(chapterId: string): Promise<ChapterPolishHistory[]> {
+    return await db
+      .select()
+      .from(chapterPolishHistory)
+      .where(eq(chapterPolishHistory.chapterId, chapterId))
+      .orderBy(desc(chapterPolishHistory.createdAt));
+  }
+
+  async createPolishHistory(history: InsertChapterPolishHistory): Promise<ChapterPolishHistory> {
+    const [created] = await db.insert(chapterPolishHistory).values(history).returning();
+    return created;
+  }
+
+  // Coherence Issues
+  async getCoherenceIssuesByProject(projectId: string): Promise<CoherenceIssue[]> {
+    return await db
+      .select()
+      .from(coherenceIssues)
+      .where(eq(coherenceIssues.projectId, projectId))
+      .orderBy(desc(coherenceIssues.createdAt));
+  }
+
+  async getCoherenceIssuesByChapter(chapterId: string): Promise<CoherenceIssue[]> {
+    return await db
+      .select()
+      .from(coherenceIssues)
+      .where(eq(coherenceIssues.chapterId, chapterId))
+      .orderBy(desc(coherenceIssues.createdAt));
+  }
+
+  async createCoherenceIssue(issue: InsertCoherenceIssue): Promise<CoherenceIssue> {
+    const [created] = await db.insert(coherenceIssues).values(issue).returning();
+    return created;
+  }
+
+  async updateCoherenceIssue(
+    id: string,
+    updates: Partial<InsertCoherenceIssue>
+  ): Promise<CoherenceIssue> {
+    const [updated] = await db
+      .update(coherenceIssues)
+      .set(updates)
+      .where(eq(coherenceIssues.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Document Deltas
+  async getDocDeltasByChapter(chapterId: string): Promise<DocDelta[]> {
+    return await db
+      .select()
+      .from(docDeltas)
+      .where(eq(docDeltas.chapterId, chapterId))
+      .orderBy(desc(docDeltas.createdAt));
+  }
+
+  async createDocDelta(delta: InsertDocDelta): Promise<DocDelta> {
+    const [created] = await db.insert(docDeltas).values(delta).returning();
+    return created;
+  }
+
+  // Character State History
+  async getCharacterStateHistory(characterId: string): Promise<any[]> {
+    return await db
+      .select()
+      .from(characterStateHistory)
+      .where(eq(characterStateHistory.characterId, characterId))
+      .orderBy(desc(characterStateHistory.createdAt));
+  }
+
+  async createCharacterStateHistory(history: any): Promise<any> {
+    const [created] = await db
+      .insert(characterStateHistory)
+      .values(history)
+      .returning();
+    return created;
+  }
+
+  // Semantic Signatures
+  async findSimilarSignatures(
+    templateId: string,
+    signatureHash: string
+  ): Promise<any[]> {
+    return await db
+      .select()
+      .from(semanticSignatures)
+      .where(
+        and(
+          eq(semanticSignatures.templateId, templateId),
+          eq(semanticSignatures.signatureHash, signatureHash)
+        )
+      )
+      .orderBy(desc(semanticSignatures.qualityScore))
+      .limit(5);
+  }
+
+  async createSemanticSignature(signature: any): Promise<any> {
+    const [created] = await db
+      .insert(semanticSignatures)
+      .values(signature)
+      .returning();
+    return created;
+  }
+
+  async updateSignatureUsage(signatureId: string): Promise<void> {
+    await db
+      .update(semanticSignatures)
+      .set({
+        reuseCount: sql`${semanticSignatures.reuseCount} + 1`,
+        lastUsedAt: new Date(),
+      })
+      .where(eq(semanticSignatures.id, signatureId));
+  }
+
+  // Character Entity Tracking
+  async getCharacter(id: string): Promise<Character | undefined> {
+    const [character] = await db
+      .select()
+      .from(characters)
+      .where(eq(characters.id, id));
+    return character || undefined;
+  }
+
+  async updateCharacter(id: string, updates: any): Promise<Character> {
+    const [updated] = await db
+      .update(characters)
+      .set(updates)
+      .where(eq(characters.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateCharacterTracking(
+    id: string,
+    updates: {
+      lastMentioned?: any;
+      mentionCount?: number;
+      firstAppearance?: any;
+    }
+  ): Promise<Character> {
+    const [updated] = await db
+      .update(characters)
+      .set(updates)
+      .where(eq(characters.id, id))
+      .returning();
+    return updated;
   }
 }
 

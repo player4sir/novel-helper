@@ -54,6 +54,7 @@ export const outlines = pgTable("outlines", {
   content: text("content"),
   orderIndex: integer("order_index").notNull().default(0),
   plotNodes: jsonb("plot_nodes"), // 情节节点：钩子点、高潮点、转折点、伏笔点
+  linkedVolumeId: varchar("linked_volume_id").references(() => volumes.id, { onDelete: "set null" }),
   linkedChapterId: varchar("linked_chapter_id").references(() => chapters.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -73,7 +74,79 @@ export const characters = pgTable("characters", {
   relationships: jsonb("relationships"), // 关系网络
   growth: text("growth"), // 成长轨迹
   notes: text("notes"),
+  lastMentioned: jsonb("last_mentioned"), // {volumeIndex, chapterIndex, sceneIndex, position}
+  mentionCount: integer("mention_count").default(0),
+  firstAppearance: jsonb("first_appearance"), // {volumeIndex, chapterIndex, sceneIndex}
+  // Enhanced entity state tracking
+  arcPoints: jsonb("arc_points").default(sql`'[]'`), // 角色弧光点
+  currentEmotion: text("current_emotion"), // 当前情感状态
+  currentGoal: text("current_goal"), // 当前目标
+  shortMotivation: text("short_motivation"), // 简短动机描述
+  stateUpdatedAt: timestamp("state_updated_at"), // 状态更新时间
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Scene Frames table - scene decomposition for chapters
+export const sceneFrames = pgTable("scene_frames", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id, { onDelete: "cascade" }),
+  index: integer("index").notNull(),
+  purpose: text("purpose").notNull(), // 场景目的
+  entryStateSummary: text("entry_state_summary"),
+  exitStateSummary: text("exit_state_summary"),
+  focalEntities: text("focal_entities").array(), // 焦点角色
+  tokensEstimate: integer("tokens_estimate"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Draft Chunks table - scene-level drafts
+export const draftChunks = pgTable("draft_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sceneId: varchar("scene_id").notNull().references(() => sceneFrames.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  mentions: text("mentions").array(), // 提及的角色
+  localSummary: text("local_summary"),
+  createdFromExecId: varchar("created_from_exec_id"),
+  wordCount: integer("word_count"),
+  ruleCheckPassed: boolean("rule_check_passed"),
+  ruleCheckErrors: jsonb("rule_check_errors"),
+  ruleCheckWarnings: jsonb("rule_check_warnings"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Chapter Polish History table - track polish operations
+export const chapterPolishHistory = pgTable("chapter_polish_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id, { onDelete: "cascade" }),
+  originalContent: text("original_content").notNull(),
+  polishedContent: text("polished_content").notNull(),
+  changeLog: jsonb("change_log"),
+  modelId: varchar("model_id"),
+  tokensUsed: integer("tokens_used"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Coherence Issues table - track detected issues
+export const coherenceIssues = pgTable("coherence_issues", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // naming, timeline, contradiction, motivation_drift, etc.
+  severity: text("severity").notNull(), // low, medium, high
+  affectedScenes: text("affected_scenes").array(),
+  evidenceSnippets: jsonb("evidence_snippets"),
+  status: text("status").notNull().default("open"), // open, fixed, ignored
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Document Deltas table - version control
+export const docDeltas = pgTable("doc_deltas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id, { onDelete: "cascade" }),
+  baseVersionId: varchar("base_version_id"),
+  patchOps: jsonb("patch_ops").notNull(), // JSON Patch operations
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: varchar("created_by"),
 });
 
 // World settings table - world-building and power systems
@@ -92,13 +165,16 @@ export const worldSettings = pgTable("world_settings", {
 export const aiModels = pgTable("ai_models", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  provider: text("provider").notNull(), // openai, anthropic, deepseek, custom
-  modelId: text("model_id").notNull(), // gpt-5, claude-sonnet-4, deepseek-chat等
+  provider: text("provider").notNull(), // openai, anthropic, deepseek, zhipu, qwen, moonshot, baichuan, custom
+  modelType: text("model_type").notNull(), // chat, embedding
+  modelId: text("model_id").notNull(), // gpt-4, claude-3, deepseek-chat, glm-4等
   apiKey: text("api_key"), // 可选，用户可以自定义
   baseUrl: text("base_url"), // 自定义API地址
   defaultParams: jsonb("default_params"), // {temperature, max_tokens, top_p等}
+  dimension: integer("dimension"), // 向量维度（仅embedding模型）
   isActive: boolean("is_active").default(true),
-  isDefault: boolean("is_default").default(false),
+  isDefaultChat: boolean("is_default_chat").default(false), // 默认对话模型
+  isDefaultEmbedding: boolean("is_default_embedding").default(false), // 默认向量模型
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -154,6 +230,24 @@ export const statistics = pgTable("statistics", {
   writingTimeMinutes: integer("writing_time_minutes").default(0),
 });
 
+// Prompt execution logs table - for auditability and tracking
+export const promptExecutions = pgTable("prompt_executions", {
+  id: varchar("id").primaryKey(),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  templateId: text("template_id").notNull(),
+  templateVersion: text("template_version").notNull(),
+  promptHash: text("prompt_hash").notNull(),
+  promptMetadata: jsonb("prompt_metadata").notNull(),
+  modelId: text("model_id").notNull(),
+  modelVersion: text("model_version").notNull(),
+  params: jsonb("params").notNull(),
+  responseHash: text("response_hash").notNull(),
+  responseSummary: text("response_summary"),
+  tokensUsed: integer("tokens_used").notNull(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  signature: text("signature"), // Optional cryptographic signature for legal evidence
+});
+
 // Relations
 export const projectsRelations = relations(projects, ({ many }) => ({
   volumes: many(volumes),
@@ -165,6 +259,7 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   plotCards: many(plotCards),
   generationHistory: many(generationHistory),
   statistics: many(statistics),
+  promptExecutions: many(promptExecutions),
 }));
 
 export const volumesRelations = relations(volumes, ({ one, many }) => ({
@@ -210,6 +305,46 @@ export const charactersRelations = relations(characters, ({ one }) => ({
   }),
 }));
 
+export const sceneFramesRelations = relations(sceneFrames, ({ one, many }) => ({
+  chapter: one(chapters, {
+    fields: [sceneFrames.chapterId],
+    references: [chapters.id],
+  }),
+  draftChunks: many(draftChunks),
+}));
+
+export const draftChunksRelations = relations(draftChunks, ({ one }) => ({
+  sceneFrame: one(sceneFrames, {
+    fields: [draftChunks.sceneId],
+    references: [sceneFrames.id],
+  }),
+}));
+
+export const chapterPolishHistoryRelations = relations(chapterPolishHistory, ({ one }) => ({
+  chapter: one(chapters, {
+    fields: [chapterPolishHistory.chapterId],
+    references: [chapters.id],
+  }),
+}));
+
+export const coherenceIssuesRelations = relations(coherenceIssues, ({ one }) => ({
+  project: one(projects, {
+    fields: [coherenceIssues.projectId],
+    references: [projects.id],
+  }),
+  chapter: one(chapters, {
+    fields: [coherenceIssues.chapterId],
+    references: [chapters.id],
+  }),
+}));
+
+export const docDeltasRelations = relations(docDeltas, ({ one }) => ({
+  chapter: one(chapters, {
+    fields: [docDeltas.chapterId],
+    references: [chapters.id],
+  }),
+}));
+
 export const worldSettingsRelations = relations(worldSettings, ({ one }) => ({
   project: one(projects, {
     fields: [worldSettings.projectId],
@@ -249,6 +384,13 @@ export const generationHistoryRelations = relations(generationHistory, ({ one })
 export const statisticsRelations = relations(statistics, ({ one }) => ({
   project: one(projects, {
     fields: [statistics.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const promptExecutionsRelations = relations(promptExecutions, ({ one }) => ({
+  project: one(projects, {
+    fields: [promptExecutions.projectId],
     references: [projects.id],
   }),
 }));
@@ -310,6 +452,87 @@ export const insertStatisticSchema = createInsertSchema(statistics).omit({
   id: true,
 });
 
+export const insertPromptExecutionSchema = createInsertSchema(promptExecutions);
+
+export const insertSceneFrameSchema = createInsertSchema(sceneFrames).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDraftChunkSchema = createInsertSchema(draftChunks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertChapterPolishHistorySchema = createInsertSchema(chapterPolishHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCoherenceIssueSchema = createInsertSchema(coherenceIssues).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDocDeltaSchema = createInsertSchema(docDeltas).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Character State History table
+export const characterStateHistory = pgTable("character_state_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  characterId: varchar("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
+  sceneIndex: integer("scene_index"),
+  emotion: text("emotion"),
+  goal: text("goal"),
+  arcPoint: text("arc_point"), // 如果在此场景达成弧光点
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Semantic Signatures table - for caching mechanism
+export const semanticSignatures = pgTable("semantic_signatures", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  templateId: text("template_id").notNull(),
+  keyInfo: text("key_info").notNull(),
+  signatureHash: text("signature_hash").notNull(),
+  embeddingModel: text("embedding_model"),
+  draftChunkId: varchar("draft_chunk_id").references(() => draftChunks.id, { onDelete: "cascade" }),
+  tokensUsed: integer("tokens_used"),
+  qualityScore: integer("quality_score"), // 0-100
+  reuseCount: integer("reuse_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+});
+
+// Prompt Template Versions table
+export const promptTemplateVersions = pgTable("prompt_template_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  templateId: text("template_id").notNull(),
+  version: text("version").notNull(),
+  modules: jsonb("modules").notNull(),
+  performanceMetrics: jsonb("performance_metrics"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCharacterStateHistorySchema = createInsertSchema(characterStateHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSemanticSignatureSchema = createInsertSchema(semanticSignatures).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertPromptTemplateVersionSchema = createInsertSchema(promptTemplateVersions).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Infer types
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 export type Project = typeof projects.$inferSelect;
@@ -343,3 +566,30 @@ export type GenerationHistory = typeof generationHistory.$inferSelect;
 
 export type InsertStatistic = z.infer<typeof insertStatisticSchema>;
 export type Statistic = typeof statistics.$inferSelect;
+
+export type InsertPromptExecution = z.infer<typeof insertPromptExecutionSchema>;
+export type PromptExecution = typeof promptExecutions.$inferSelect;
+
+export type InsertSceneFrame = z.infer<typeof insertSceneFrameSchema>;
+export type SceneFrame = typeof sceneFrames.$inferSelect;
+
+export type InsertDraftChunk = z.infer<typeof insertDraftChunkSchema>;
+export type DraftChunk = typeof draftChunks.$inferSelect;
+
+export type InsertChapterPolishHistory = z.infer<typeof insertChapterPolishHistorySchema>;
+export type ChapterPolishHistory = typeof chapterPolishHistory.$inferSelect;
+
+export type InsertCoherenceIssue = z.infer<typeof insertCoherenceIssueSchema>;
+export type CoherenceIssue = typeof coherenceIssues.$inferSelect;
+
+export type InsertDocDelta = z.infer<typeof insertDocDeltaSchema>;
+export type DocDelta = typeof docDeltas.$inferSelect;
+
+export type InsertCharacterStateHistory = z.infer<typeof insertCharacterStateHistorySchema>;
+export type CharacterStateHistory = typeof characterStateHistory.$inferSelect;
+
+export type InsertSemanticSignature = z.infer<typeof insertSemanticSignatureSchema>;
+export type SemanticSignature = typeof semanticSignatures.$inferSelect;
+
+export type InsertPromptTemplateVersion = z.infer<typeof insertPromptTemplateVersionSchema>;
+export type PromptTemplateVersion = typeof promptTemplateVersions.$inferSelect;
