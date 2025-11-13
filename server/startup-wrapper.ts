@@ -76,6 +76,23 @@ export function validateEnvironment() {
   console.log("✓ All required environment variables present");
 }
 
+// 测试数据库连接
+export async function testDatabaseConnection() {
+  try {
+    console.log("Testing database connection...");
+    const { pool } = await import("./db");
+    const result = await pool.query('SELECT 1 as test');
+    console.log("✓ Database connection successful");
+    return true;
+  } catch (error: any) {
+    console.error("✗ Database connection failed:");
+    console.error(`  Error: ${error.message}`);
+    console.error(`  Code: ${error.code}`);
+    console.error(`  Stack: ${error.stack}`);
+    throw error;
+  }
+}
+
 // 诊断信息
 export function printDiagnostics() {
   console.log("\n" + "=".repeat(60));

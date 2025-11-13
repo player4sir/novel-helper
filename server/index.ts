@@ -61,6 +61,10 @@ app.use((req, res, next) => {
     
     // 验证必需的环境变量
     validateEnvironment();
+    
+    // 测试数据库连接
+    const { testDatabaseConnection } = await import("./startup-wrapper");
+    await testDatabaseConnection();
   } catch (err) {
     console.error("✗ Startup failed:", err);
     process.exit(1);
