@@ -25,9 +25,5 @@ EXPOSE 5000
 # 设置环境变量
 ENV NODE_ENV=production
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s \
-  CMD node -e "require('http').get('http://localhost:5000/api/projects', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
 # 启动应用
 CMD ["node", "dist/index.js"]
