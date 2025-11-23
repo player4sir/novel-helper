@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, TrendingUp, BookOpen, Zap, Calendar } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -39,6 +39,16 @@ export default function Statistics() {
 
   const { data: statistics } = useQuery<Statistic[]>({
     queryKey: ["/api/statistics", selectedProjectId],
+    enabled: !!selectedProjectId,
+  });
+
+  // 获取生成日志统计
+  const { data: generationStats } = useQuery<{
+    totalGenerations: number;
+    avgQuality: number;
+    cacheHitRate: number;
+  }>({
+    queryKey: ["/api/generation-logs/stats", selectedProjectId],
     enabled: !!selectedProjectId,
   });
 
@@ -146,10 +156,12 @@ export default function Statistics() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {totalAIGenerations}
+                  {generationStats?.totalGenerations || totalAIGenerations}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  次调用
+                  {generationStats?.avgQuality 
+                    ? `平均质量 ${generationStats.avgQuality?.toFixed(0)} 分`
+                    : "次调用"}
                 </p>
               </CardContent>
             </Card>
@@ -237,6 +249,57 @@ export default function Statistics() {
                 </ResponsiveContainer>
               </CardContent>
             </Card>
+          )}
+
+          {/* 高级分析入口 */}
+          {generationStats && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card className="cursor-pointer hover:border-primary transition-colors">
+                <a href="/analytics">
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4" />
+                      成本与质量分析
+                    </CardTitle>
+                    <CardDescription>
+                      查看详细的成本监控和质量趋势
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">平均质量：</span>
+                        <span className="font-medium">
+                          {generationStats?.avgQuality?.toFixed(0) ?? 0} 分
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </a>
+              </Card>
+
+              <Card className="cursor-pointer hover:border-primary transition-colors">
+                <a href="/generation-logs">
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" />
+                      生成日志审计
+                    </CardTitle>
+                    <CardDescription>
+                      查看完整的AI生成记录、路由决策和质量评分
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">总生成次数：</span>
+                      <span className="font-medium">
+                        {generationStats.totalGenerations} 次
+                      </span>
+                    </div>
+                  </CardContent>
+                </a>
+              </Card>
+            </div>
           )}
         </>
       ) : (

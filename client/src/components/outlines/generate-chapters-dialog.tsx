@@ -47,7 +47,11 @@ export function GenerateChaptersDialog({
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/chapters", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outlines", projectId] });
+      // Invalidate all outline queries to ensure consistency
+      queryClient.invalidateQueries({ 
+        queryKey: ["/api/outlines"],
+        refetchType: "all" 
+      });
       toast({
         title: "生成成功",
         description: `已为《${volumeTitle}》生成 ${data.chapters.length} 个章节`,

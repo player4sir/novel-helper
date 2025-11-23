@@ -11,6 +11,7 @@ interface AIGenerateRequest {
     temperature: number;
     maxTokens: number;
   };
+  responseFormat?: "json" | "text";
 }
 
 interface AIGenerateResponse {
@@ -244,7 +245,7 @@ export class AIService {
   }
 
   async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
-    const { prompt, modelId, provider, baseUrl, apiKey, parameters } = request;
+    const { prompt, modelId, provider, baseUrl, apiKey, parameters, responseFormat } = request;
 
     let effectiveApiKey = apiKey || this.getDefaultApiKey(provider);
     if (!effectiveApiKey) {
@@ -266,7 +267,8 @@ export class AIService {
           baseUrl,
           effectiveApiKey,
           prompt,
-          parameters
+          parameters,
+          responseFormat
         );
       }
     } catch (error: any) {
@@ -279,25 +281,33 @@ export class AIService {
     baseUrl: string,
     apiKey: string,
     prompt: string,
-    parameters: { temperature: number; maxTokens: number }
+    parameters: { temperature: number; maxTokens: number },
+    responseFormat?: "json" | "text"
   ): Promise<AIGenerateResponse> {
+    const requestBody: any = {
+      model: modelId,
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: parameters.temperature,
+      max_tokens: parameters.maxTokens,
+    };
+
+    // Only add response_format for JSON mode
+    if (responseFormat === "json") {
+      requestBody.response_format = { type: "json_object" };
+    }
+
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        temperature: parameters.temperature,
-        max_tokens: parameters.maxTokens,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -353,6 +363,155 @@ export class AIService {
     };
   }
 
+  async *generateStream(request: AIGenerateRequest): AsyncGenerator<string, void, unknown> {
+    const { prompt, modelId, provider, baseUrl, apiKey, parameters } = request;
+
+    let effectiveApiKey = apiKey || this.getDefaultApiKey(provider);
+    if (!effectiveApiKey) {
+      throw new Error(`No API key available for provider: ${provider}`);
+    }
+
+    try {
+      if (provider === "anthropic") {
+        yield* this.generateAnthropicStream(
+          modelId,
+          baseUrl,
+          effectiveApiKey,
+          prompt,
+          parameters
+        );
+      } else {
+        yield* this.generateOpenAICompatibleStream(
+          modelId,
+          baseUrl,
+          effectiveApiKey,
+          prompt,
+          parameters
+        );
+      }
+    } catch (error: any) {
+      throw new Error(`AI generation stream failed: ${error.message}`);
+    }
+  }
+
+  private async *generateOpenAICompatibleStream(
+    modelId: string,
+    baseUrl: string,
+    apiKey: string,
+    prompt: string,
+    parameters: { temperature: number; maxTokens: number }
+  ): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "user", content: prompt }],
+        temperature: parameters.temperature,
+        max_tokens: parameters.maxTokens,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI API error: ${response.status} - ${errorText}`);
+    }
+
+    if (!response.body) throw new Error("Response body is null");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.trim() === "") continue;
+        if (line.trim() === "data: [DONE]") continue;
+        if (!line.startsWith("data: ")) continue;
+
+        try {
+          const data = JSON.parse(line.slice(6));
+          const content = data.choices[0]?.delta?.content;
+          if (content) {
+            console.log("Stream chunk:", content);
+            yield content;
+          }
+        } catch (e) {
+          console.warn("Failed to parse stream line:", line);
+        }
+      }
+    }
+  }
+
+  private async *generateAnthropicStream(
+    modelId: string,
+    baseUrl: string,
+    apiKey: string,
+    prompt: string,
+    parameters: { temperature: number; maxTokens: number }
+  ): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${baseUrl}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: modelId,
+        max_tokens: parameters.maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        temperature: parameters.temperature,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI API error: ${response.status} - ${errorText}`);
+    }
+
+    if (!response.body) throw new Error("Response body is null");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.trim() === "") continue;
+        if (!line.startsWith("data: ")) continue;
+
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === "content_block_delta" && data.delta?.text) {
+            yield data.delta.text;
+          }
+        } catch (e) {
+          console.warn("Failed to parse stream line:", line);
+        }
+      }
+    }
+  }
+
   buildContextualPrompt(
     basePrompt: string,
     context?: {
@@ -391,7 +550,7 @@ export class AIService {
   async getEmbedding(text: string): Promise<number[] | null> {
     try {
       const { storage } = await import("./storage");
-      
+
       // Get default embedding model
       const models = await storage.getAIModels();
       const embeddingModel = models.find(
@@ -468,6 +627,52 @@ export class AIService {
       console.error("[AI Service] Get default embedding model failed:", error);
       return null;
     }
+  }
+  /**
+   * Simple generation helper using default model
+   */
+  async generateSimple(prompt: string, modelId?: string): Promise<string> {
+    let targetModelId = modelId;
+    let provider = 'openai';
+    let baseUrl = '';
+    let apiKey = '';
+
+    if (!targetModelId) {
+      const { storage } = await import("./storage");
+      const models = await storage.getAIModels();
+      const defaultModel = models.find(m => m.isDefaultChat && m.isActive);
+      if (defaultModel) {
+        targetModelId = defaultModel.modelId;
+        provider = defaultModel.provider;
+        baseUrl = defaultModel.baseUrl || '';
+        apiKey = defaultModel.apiKey || '';
+      } else {
+        throw new Error("No default chat model configured");
+      }
+    } else {
+      // If modelId provided, try to find its config to get provider/url/key
+      const { storage } = await import("./storage");
+      const models = await storage.getAIModels();
+      const modelConfig = models.find(m => m.modelId === targetModelId);
+      if (modelConfig) {
+        provider = modelConfig.provider;
+        baseUrl = modelConfig.baseUrl || '';
+        apiKey = modelConfig.apiKey || '';
+      }
+    }
+
+    const response = await this.generate({
+      prompt,
+      modelId: targetModelId,
+      provider,
+      baseUrl,
+      apiKey,
+      parameters: {
+        temperature: 0.7,
+        maxTokens: 2000
+      }
+    });
+    return response.content;
   }
 }
 

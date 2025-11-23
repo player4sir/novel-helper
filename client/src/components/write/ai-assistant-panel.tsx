@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sparkles,
   Wand2,
@@ -8,9 +8,12 @@ import {
   RefreshCw,
   Copy,
   ArrowDownToLine,
+  CheckCircle2,
+  FileText,
+  Loader2,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -21,136 +24,115 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import type { AIModel, PromptTemplate, Outline, Character } from "@shared/schema";
+import { useEditorAI } from "@/hooks/use-editor-ai";
+import type { AIModel, PromptTemplate } from "@shared/schema";
+import type { EditorPanelHandle } from "./editor-panel";
 
 interface AIAssistantPanelProps {
   projectId: string;
   chapterId: string | null;
+  editorRef: React.RefObject<EditorPanelHandle>;
 }
+
+
 
 export function AIAssistantPanel({
   projectId,
   chapterId,
+  editorRef,
 }: AIAssistantPanelProps) {
   const { toast } = useToast();
+  const { processInstructionStream, isProcessing } = useEditorAI();
+
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [temperature, setTemperature] = useState([0.7]);
-  const [maxTokens, setMaxTokens] = useState([2000]);
-  const [customPrompt, setCustomPrompt] = useState("");
+  const [selectedStyle, setSelectedStyle] = useState<string>("none");
   const [generatedContent, setGeneratedContent] = useState("");
+  const [autoApply, setAutoApply] = useState(false);
+  const [lastSelection, setLastSelection] = useState<{ start: number; end: number } | null>(null);
 
   const { data: aiModels } = useQuery<AIModel[]>({
     queryKey: ["/api/ai-models"],
   });
 
+  const { data: styles } = useQuery<any[]>({
+    queryKey: ["/api/styles", projectId],
+    queryFn: async () => {
+      const response = await fetch(`/api/projects/${projectId}/styles`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch styles");
+      }
+      return response.json();
+    },
+    enabled: !!projectId,
+  });
+
   const { data: templates } = useQuery<PromptTemplate[]>({
-    queryKey: ["/api/prompt-templates", projectId],
-  });
-
-  // Fetch chapter outline for context
-  const { data: outline } = useQuery<Outline>({
-    queryKey: ["/api/outlines", projectId, chapterId],
+    queryKey: ["/api/templates", projectId],
     queryFn: async () => {
-      if (!chapterId) return null;
-      const res = await fetch(`/api/outlines?projectId=${projectId}`);
-      if (!res.ok) return null;
-      const outlines = await res.json();
-      return outlines.find((o: Outline) => o.linkedChapterId === chapterId);
-    },
-    enabled: !!chapterId,
-  });
-
-  // Fetch characters for context
-  const { data: characters } = useQuery<Character[]>({
-    queryKey: ["/api/characters", projectId],
-    queryFn: async () => {
-      const res = await fetch(`/api/characters?projectId=${projectId}`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  const generateMutation = useMutation({
-    mutationFn: async (data: {
-      prompt: string;
-      modelId: string;
-      parameters: { temperature: number; maxTokens: number };
-    }) => {
-      // Build contextual prompt with chapter outline and character info
-      let contextualPrompt = data.prompt;
-      
-      if (chapterId && outline) {
-        const plotNodes = outline.plotNodes as any;
-        const contextParts: string[] = [];
-        
-        // Add chapter beats
-        if (plotNodes?.beats && Array.isArray(plotNodes.beats)) {
-          contextParts.push(`【章节节拍】\n${plotNodes.beats.map((b: string, i: number) => `${i + 1}. ${b}`).join('\n')}`);
-        }
-        
-        // Add required entities
-        if (plotNodes?.requiredEntities && Array.isArray(plotNodes.requiredEntities)) {
-          contextParts.push(`【必需角色】\n${plotNodes.requiredEntities.join('、')}`);
-        }
-        
-        // Add entry/exit states
-        if (plotNodes?.entryState) {
-          contextParts.push(`【入场状态】\n${plotNodes.entryState}`);
-        }
-        if (plotNodes?.exitState) {
-          contextParts.push(`【出场状态】\n${plotNodes.exitState}`);
-        }
-        
-        // Add stakes delta
-        if (plotNodes?.stakesDelta) {
-          contextParts.push(`【风险变化】\n${plotNodes.stakesDelta}`);
-        }
-        
-        if (contextParts.length > 0) {
-          contextualPrompt = `${contextParts.join('\n\n')}\n\n【用户需求】\n${data.prompt}`;
-        }
+      const response = await fetch(`/api/projects/${projectId}/templates`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch templates");
       }
-      
-      // Add character information
-      if (characters && characters.length > 0) {
-        const charInfo = characters.slice(0, 5).map((c) => 
-          `${c.name}（${c.role}）：${c.personality || '暂无描述'}`
-        ).join('\n');
-        contextualPrompt += `\n\n【角色信息】\n${charInfo}`;
-      }
-      
-      return await apiRequest("POST", "/api/ai/generate", {
-        ...data,
-        prompt: contextualPrompt,
-      });
+      return response.json();
     },
-    onSuccess: (data: any) => {
-      setGeneratedContent(data.content);
-    },
+    enabled: !!projectId,
   });
 
+  const activeModels = aiModels?.filter((model) => model.isActive) || [];
   const continueTemplates = templates?.filter((t) => t.category === "continue") || [];
-  const rewriteTemplates = templates?.filter((t) => t.category === "rewrite") || [];
 
-  const activeModels = aiModels?.filter((m) => m.isActive) || [];
-  const defaultModel = activeModels.find((m) => m.isDefaultChat) || activeModels[0];
+  useEffect(() => {
+    if (activeModels.length > 0 && !selectedModel) {
+      setSelectedModel(activeModels[0].id);
+    }
+  }, [activeModels, selectedModel]);
 
-  if (!selectedModel && defaultModel) {
-    setSelectedModel(defaultModel.id);
-  }
+  const handleAIRequestWithAutoApply = async (prompt: string) => {
+    if (!editorRef.current || !chapterId || !selectedModel) return;
+
+    const selection = editorRef.current.getSelection();
+    setLastSelection(selection);
+
+    const context = editorRef.current.getContent();
+    const selectedText = selection ? selection.text : "";
+
+    const fullPrompt = selectedText ? `${prompt}\n\n选中的内容：\n${selectedText}` : prompt;
+
+    await processInstructionStream(
+      {
+        projectId,
+        chapterId,
+        instruction: fullPrompt,
+        chapterContent: context,
+        selectedText,
+        cursorPosition: selection ? selection.end : 0,
+        styleProfileId: selectedStyle === "none" ? undefined : selectedStyle,
+      },
+      {
+        onChunk: (chunk) => {
+          setGeneratedContent((prev) => prev + chunk);
+        },
+        onMetadata: (metadata) => {
+          console.log("AI Metadata:", metadata);
+        },
+        onError: (error: any) => {
+          console.error("AI processing failed:", error);
+          toast({
+            title: "AI处理失败",
+            description: error.message || "Unknown error",
+            variant: "destructive"
+          });
+        },
+      }
+    );
+  };
 
   const handleQuickAction = async (action: string, templateId?: string) => {
-    if (!chapterId) {
-      return;
-    }
-
     let prompt = "";
-    
+
     switch (action) {
       case "continue":
         prompt = "根据上文内容，继续写作，保持风格一致，推进剧情发展。";
@@ -164,6 +146,9 @@ export function AIAssistantPanel({
       case "hook":
         prompt = "在章节末尾设计一个吸引人的钩子，让读者想继续阅读。";
         break;
+      case "polish":
+        prompt = "润色这段文字，使其更加通顺、优美，保持原意不变。";
+        break;
     }
 
     if (templateId) {
@@ -173,295 +158,226 @@ export function AIAssistantPanel({
       }
     }
 
-    generateMutation.mutate({
-      prompt: customPrompt || prompt,
-      modelId: selectedModel,
-      parameters: {
-        temperature: temperature[0],
-        maxTokens: maxTokens[0],
-      },
+    await handleAIRequestWithAutoApply(prompt);
+  };
+
+  const handleInsertContent = () => {
+    if (!editorRef.current || !generatedContent) return;
+
+    editorRef.current.insertContent(generatedContent, lastSelection || undefined);
+    toast({
+      title: "已插入",
+      description: "内容已插入到编辑器",
     });
   };
 
   return (
-    <div className="w-80 border-l border-border flex flex-col bg-card">
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center gap-2 mb-3">
-          <Sparkles className="h-5 w-5 text-primary" />
-          <h3 className="font-semibold text-sm">AI 创作助手</h3>
+    <div className="h-full flex flex-col bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="p-3 border-b space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <span className="font-medium text-sm">AI 助手</span>
+          </div>
+          <Badge variant={isProcessing ? "secondary" : "outline"} className="text-[10px] h-5">
+            {isProcessing ? (
+              <span className="flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                生成中
+              </span>
+            ) : (
+              "就绪"
+            )}
+          </Badge>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <Label className="text-xs">AI 模型</Label>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 min-w-0 flex gap-2">
+            <Select value={selectedStyle} onValueChange={setSelectedStyle}>
+              <SelectTrigger className="h-8 text-xs w-[100px] bg-background/50">
+                <SelectValue placeholder="风格" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">默认风格</SelectItem>
+                {styles?.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="mt-1.5" data-testid="select-ai-model">
+              <SelectTrigger className="h-8 text-xs flex-1 bg-background/50">
                 <SelectValue placeholder="选择模型" />
               </SelectTrigger>
               <SelectContent>
                 {activeModels.map((model) => (
                   <SelectItem key={model.id} value={model.id}>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{model.name}</span>
-                      {model.isDefaultChat && (
-                        <Badge variant="secondary" className="text-xs">
-                          默认
-                        </Badge>
-                      )}
-                    </div>
+                    {model.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Label className="text-[10px] text-muted-foreground cursor-pointer" htmlFor="auto-apply">
+              直接插入
+            </Label>
+            <Switch
+              id="auto-apply"
+              checked={autoApply}
+              onCheckedChange={setAutoApply}
+              className="scale-75 data-[state=checked]:bg-primary"
+            />
+          </div>
         </div>
       </div>
 
       <ScrollArea className="flex-1">
-        <Tabs defaultValue="quick" className="p-4">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="quick">快捷操作</TabsTrigger>
-            <TabsTrigger value="custom">自定义</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="quick" className="space-y-3 mt-4">
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">常用功能</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="justify-start"
-                  onClick={() => handleQuickAction("continue")}
-                  disabled={!chapterId || generateMutation.isPending}
-                  data-testid="button-ai-continue"
-                >
-                  <Wand2 className="h-3 w-3 mr-2" />
-                  智能续写
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="justify-start"
-                  onClick={() => handleQuickAction("dialogue")}
-                  disabled={!chapterId || generateMutation.isPending}
-                  data-testid="button-ai-dialogue"
-                >
-                  <MessageSquare className="h-3 w-3 mr-2" />
-                  对话生成
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="justify-start"
-                  onClick={() => handleQuickAction("scene")}
-                  disabled={!chapterId || generateMutation.isPending}
-                  data-testid="button-ai-scene"
-                >
-                  <Sparkles className="h-3 w-3 mr-2" />
-                  场景描写
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="justify-start"
-                  onClick={() => handleQuickAction("hook")}
-                  disabled={!chapterId || generateMutation.isPending}
-                  data-testid="button-ai-hook"
-                >
-                  <Zap className="h-3 w-3 mr-2" />
-                  钩子生成
-                </Button>
-              </div>
-            </div>
-
-            {continueTemplates.length > 0 && (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">续写模板</Label>
-                  <div className="space-y-1">
-                    {continueTemplates.slice(0, 3).map((template) => (
-                      <Button
-                        key={template.id}
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start text-xs"
-                        onClick={() => handleQuickAction("template", template.id)}
-                        disabled={!chapterId || generateMutation.isPending}
-                      >
-                        {template.name}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {generatedContent && (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">生成结果</Label>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedContent);
-                          toast({
-                            title: "已复制",
-                            description: "内容已复制到剪贴板",
-                          });
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={() => {
-                          window.dispatchEvent(new CustomEvent('insertAIContent', {
-                            detail: { content: generatedContent }
-                          }));
-                          toast({
-                            title: "已插入",
-                            description: "内容已插入到编辑器",
-                          });
-                        }}
-                      >
-                        <ArrowDownToLine className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={() => setGeneratedContent("")}
-                      >
-                        <RefreshCw className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="p-3 bg-muted rounded-md text-sm leading-relaxed max-h-60 overflow-y-auto">
-                    {generatedContent}
-                  </div>
-                </div>
-              </>
-            )}
-          </TabsContent>
-
-          <TabsContent value="custom" className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label className="text-xs">自定义提示词</Label>
-              <Textarea
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                placeholder="输入您的创作需求..."
-                rows={4}
-                className="resize-none text-sm"
-                data-testid="textarea-custom-prompt"
-              />
-            </div>
-
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">创意度</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {temperature[0].toFixed(1)}
-                  </span>
-                </div>
-                <Slider
-                  value={temperature}
-                  onValueChange={setTemperature}
-                  min={0}
-                  max={2}
-                  step={0.1}
-                  data-testid="slider-temperature"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">最大长度</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {maxTokens[0]}
-                  </span>
-                </div>
-                <Slider
-                  value={maxTokens}
-                  onValueChange={setMaxTokens}
-                  min={500}
-                  max={4000}
-                  step={100}
-                  data-testid="slider-max-tokens"
-                />
-              </div>
-            </div>
-
+        <div className="p-3 space-y-4">
+          <div className="grid grid-cols-2 gap-2">
             <Button
-              className="w-full"
-              onClick={() => handleQuickAction("custom")}
-              disabled={!chapterId || !customPrompt || generateMutation.isPending}
-              data-testid="button-generate-custom"
+              variant="outline"
+              size="sm"
+              className="justify-start h-8 text-xs font-normal bg-background/50 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => handleQuickAction("continue")}
+              disabled={!chapterId || isProcessing}
+              data-testid="button-ai-continue"
             >
-              {generateMutation.isPending ? (
-                <>生成中...</>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4 mr-2" />
-                  生成内容
-                </>
-              )}
+              <Wand2 className="h-3.5 w-3.5 mr-2 text-blue-500" />
+              智能续写
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start h-8 text-xs font-normal bg-background/50 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => handleQuickAction("dialogue")}
+              disabled={!chapterId || isProcessing}
+              data-testid="button-ai-dialogue"
+            >
+              <MessageSquare className="h-3.5 w-3.5 mr-2 text-green-500" />
+              对话生成
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start h-8 text-xs font-normal bg-background/50 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => handleQuickAction("scene")}
+              disabled={!chapterId || isProcessing}
+              data-testid="button-ai-scene"
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-2 text-purple-500" />
+              场景描写
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start h-8 text-xs font-normal bg-background/50 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => handleQuickAction("hook")}
+              disabled={!chapterId || isProcessing}
+              data-testid="button-ai-hook"
+            >
+              <Zap className="h-3.5 w-3.5 mr-2 text-yellow-500" />
+              钩子生成
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start h-8 text-xs font-normal col-span-2 bg-background/50 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => handleQuickAction("polish")}
+              disabled={!chapterId || isProcessing}
+              data-testid="button-ai-polish"
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-2 text-orange-500" />
+              润色优化选中内容
+            </Button>
+          </div>
 
-            {generatedContent && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground">生成结果</Label>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6"
-                      onClick={() => {
-                        navigator.clipboard.writeText(generatedContent);
-                        toast({
-                          title: "已复制",
-                          description: "内容已复制到剪贴板",
-                        });
-                      }}
-                    >
-                      <Copy className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6"
-                      onClick={() => {
-                        window.dispatchEvent(new CustomEvent('insertAIContent', {
-                          detail: { content: generatedContent }
-                        }));
-                        toast({
-                          title: "已插入",
-                          description: "内容已插入到编辑器",
-                        });
-                      }}
-                    >
-                      <ArrowDownToLine className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="p-3 bg-muted rounded-md text-sm leading-relaxed max-h-60 overflow-y-auto">
-                  {generatedContent}
+          {continueTemplates.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Separator className="flex-1" />
+                <span className="text-[10px] text-muted-foreground font-medium">模板</span>
+                <Separator className="flex-1" />
+              </div>
+              <div className="grid grid-cols-1 gap-1">
+                {continueTemplates.slice(0, 3).map((template) => (
+                  <Button
+                    key={template.id}
+                    variant="ghost"
+                    size="sm"
+                    className="justify-start h-7 text-xs font-normal text-muted-foreground hover:text-foreground"
+                    onClick={() => handleQuickAction("template", template.id)}
+                    disabled={!chapterId || isProcessing}
+                  >
+                    <FileText className="h-3 w-3 mr-2 opacity-70" />
+                    {template.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(generatedContent || isProcessing) && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                      生成中...
+                    </>
+                  ) : (
+                    "生成结果"
+                  )}
+                </Label>
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 hover:bg-muted"
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedContent);
+                      toast({ title: "已复制", description: "内容已复制到剪贴板" });
+                    }}
+                    disabled={!generatedContent}
+                    title="复制"
+                  >
+                    <Copy className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 hover:bg-muted"
+                    onClick={handleInsertContent}
+                    disabled={!generatedContent}
+                    title="插入编辑器"
+                  >
+                    <ArrowDownToLine className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 hover:bg-muted"
+                    onClick={() => setGeneratedContent("")}
+                    disabled={isProcessing}
+                    title="清空"
+                  >
+                    <RefreshCw className="h-3 w-3 text-muted-foreground" />
+                  </Button>
                 </div>
               </div>
-            )}
-          </TabsContent>
-        </Tabs>
+
+              <div className="relative group">
+                <div className={`
+                      p-3 rounded-md text-sm leading-relaxed min-h-[100px] max-h-[400px] overflow-y-auto whitespace-pre-wrap
+                      ${isProcessing ? 'bg-muted/50 animate-pulse' : 'bg-muted/30 border border-border/50 shadow-sm'}
+                    `}>
+                  {generatedContent || (isProcessing ? "AI 正在思考..." : <span className="text-muted-foreground italic text-xs">暂无生成内容</span>)}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </ScrollArea>
     </div>
   );

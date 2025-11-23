@@ -278,7 +278,10 @@ export class ProjectManagementService {
    */
   async duplicateProject(
     projectId: string,
-    newTitle?: string
+    newTitle?: string,
+    options?: {
+      preserveCharacterState?: boolean;
+    }
   ): Promise<{ project: Project; executionId: string }> {
     const sourceProject = await storage.getProject(projectId);
     if (!sourceProject) {
@@ -317,7 +320,7 @@ export class ProjectManagementService {
     // 复制角色
     const characters = await storage.getCharactersByProject(projectId);
     for (const character of characters) {
-      await storage.createCharacter({
+      const characterData: any = {
         projectId: newProject.id,
         name: character.name,
         role: character.role,
@@ -327,10 +330,34 @@ export class ProjectManagementService {
         personality: character.personality,
         background: character.background,
         abilities: character.abilities,
-        relationships: character.relationships as any,
         growth: character.growth,
         notes: character.notes,
-      });
+      };
+
+      // Handle state fields based on preserveCharacterState option
+      if (options?.preserveCharacterState) {
+        // Preserve all state fields
+        characterData.shortMotivation = character.shortMotivation;
+        characterData.currentEmotion = character.currentEmotion;
+        characterData.currentGoal = character.currentGoal;
+        characterData.arcPoints = character.arcPoints;
+        characterData.relationships = character.relationships as any;
+      } else {
+        // Reset state fields but keep shortMotivation (core motivation)
+        characterData.shortMotivation = character.shortMotivation;
+        characterData.currentEmotion = null;
+        characterData.currentGoal = null;
+        characterData.arcPoints = [];
+        characterData.relationships = {};
+      }
+
+      // Always reset position tracking fields
+      characterData.lastMentioned = null;
+      characterData.mentionCount = 0;
+      characterData.firstAppearance = null;
+      characterData.stateUpdatedAt = new Date();
+
+      await storage.createCharacter(characterData);
     }
 
     // 复制世界设定
@@ -351,6 +378,7 @@ export class ProjectManagementService {
     await this.logProjectOperation(executionId, newProject.id, "duplicate", {
       sourceProjectId: projectId,
       sourceProjectTitle: sourceProject.title,
+      preserveCharacterState: options?.preserveCharacterState || false,
     });
 
     return { project: newProject, executionId };

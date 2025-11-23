@@ -144,14 +144,14 @@ export function EditProjectDialog({
                   <SelectValue placeholder="选择类型" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="玄幻">玄幻</SelectItem>
-                  <SelectItem value="仙侠">仙侠</SelectItem>
-                  <SelectItem value="都市">都市</SelectItem>
-                  <SelectItem value="科幻">科幻</SelectItem>
-                  <SelectItem value="历史">历史</SelectItem>
-                  <SelectItem value="武侠">武侠</SelectItem>
-                  <SelectItem value="言情">言情</SelectItem>
-                  <SelectItem value="其他">其他</SelectItem>
+                  {["玄幻", "仙侠", "都市", "科幻", "历史", "武侠", "言情", "其他"].map((genre) => (
+                    <SelectItem key={genre} value={genre}>
+                      {genre}
+                    </SelectItem>
+                  ))}
+                  {form.genre && !["玄幻", "仙侠", "都市", "科幻", "历史", "武侠", "言情", "其他"].includes(form.genre) && (
+                    <SelectItem value={form.genre}>{form.genre}</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>

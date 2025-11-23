@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, BookOpen, FileText, TrendingUp, MoreVertical, Pencil, Trash2, Copy, Archive, Calendar } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,8 @@ interface TodayStats {
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
+  const [deleteProject, setDeleteProject] = useState<Project | null>(null);
+
   const { data: projects, isLoading } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
   });
@@ -43,7 +46,10 @@ export default function Dashboard() {
   const activeProjects = projects?.filter((p: Project) => p.status === "active") || [];
   const totalWords = projects?.reduce((sum: number, p: Project) => sum + (p.currentWordCount || 0), 0) || 0;
 
-  const handleProjectCreated = (projectId: string) => {
+  const queryClient = useQueryClient();
+
+  const handleProjectCreated = async (projectId: string) => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
     setLocation(`/write?project=${projectId}`);
   };
 
@@ -140,11 +146,11 @@ export default function Dashboard() {
               const progress = project.targetWordCount && project.targetWordCount > 0
                 ? Math.min(((project.currentWordCount || 0) / project.targetWordCount) * 100, 100)
                 : 0;
-              
+
               return (
-                <Card 
+                <Card
                   key={project.id}
-                  className="group hover:shadow-md hover:border-primary/50 transition-all relative" 
+                  className="group hover:shadow-md hover:border-primary/50 transition-all relative"
                   data-testid={`card-project-${project.id}`}
                 >
                   <div className="absolute top-4 right-4 z-10">
@@ -177,15 +183,13 @@ export default function Dashboard() {
                           归档
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DeleteProjectDialog project={project}>
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onSelect={(e) => e.preventDefault()}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            删除
-                          </DropdownMenuItem>
-                        </DeleteProjectDialog>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onSelect={() => setDeleteProject(project)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          删除
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -274,6 +278,14 @@ export default function Dashboard() {
           </Card>
         )}
       </div>
+
+      {deleteProject && (
+        <DeleteProjectDialog
+          project={deleteProject}
+          open={!!deleteProject}
+          onOpenChange={(open) => !open && setDeleteProject(null)}
+        />
+      )}
     </div>
   );
 }

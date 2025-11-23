@@ -18,7 +18,6 @@ import {
   coherenceIssues,
   docDeltas,
   characterStateHistory,
-  semanticSignatures,
   type Project,
   type InsertProject,
   type Volume,
@@ -53,9 +52,18 @@ import {
   type InsertCoherenceIssue,
   type DocDelta,
   type InsertDocDelta,
+  generationLogs,
+  type GenerationLog,
+  type InsertGenerationLog,
+  changeSets,
+  type ChangeSet,
+  type InsertChangeSet,
+  systemConfig,
+  type SystemConfig,
+  type InsertSystemConfig,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, isNull, sql } from "drizzle-orm";
+import { eq, desc, and, isNull, or } from "drizzle-orm";
 
 export interface IStorage {
   // Projects
@@ -104,9 +112,11 @@ export interface IStorage {
 
   // Prompt Templates
   getPromptTemplates(projectId?: string): Promise<PromptTemplate[]>;
+  getPromptTemplate(id: string): Promise<PromptTemplate | undefined>;
   createPromptTemplate(template: InsertPromptTemplate): Promise<PromptTemplate>;
   updatePromptTemplate(id: string, updates: Partial<InsertPromptTemplate>): Promise<PromptTemplate>;
   deletePromptTemplate(id: string): Promise<void>;
+  clearTemplateCache(): void;
 
   // Plot Cards
   getPlotCards(projectId?: string): Promise<PlotCard[]>;
@@ -136,6 +146,7 @@ export interface IStorage {
   getDraftChunksByScene(sceneId: string): Promise<DraftChunk[]>;
   getDraftChunk(id: string): Promise<DraftChunk | undefined>;
   createDraftChunk(chunk: InsertDraftChunk): Promise<DraftChunk>;
+  updateDraftChunk(id: string, updates: Partial<InsertDraftChunk>): Promise<DraftChunk>;
   deleteDraftChunksByScene(sceneId: string): Promise<void>;
 
   // Chapter Polish History
@@ -172,6 +183,22 @@ export interface IStorage {
       firstAppearance?: any;
     }
   ): Promise<Character>;
+
+  // Generation Logs
+  createGenerationLog(log: any): Promise<any>;
+  queryGenerationLogs(filters: any): Promise<any[]>;
+  createGenerationLog(log: any): Promise<any>;
+  queryGenerationLogs(filters: any): Promise<any[]>;
+  getGenerationLogByExecutionId(executionId: string): Promise<any | null>;
+
+  // Change Sets
+  getChangeSetsByChapter(chapterId: string): Promise<ChangeSet[]>;
+  createChangeSet(changeSet: InsertChangeSet): Promise<ChangeSet>;
+
+  // System Config
+  getSystemConfig(key: string): Promise<SystemConfig | null>;
+  setSystemConfig(key: string, value: any, environment?: string, description?: string): Promise<SystemConfig>;
+  getAllSystemConfigs(): Promise<SystemConfig[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -224,6 +251,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteVolume(id: string): Promise<void> {
+    // Delete related outlines first
+    await db.delete(outlines).where(eq(outlines.linkedVolumeId, id));
+    // Then delete the volume
     await db.delete(volumes).where(eq(volumes.id, id));
   }
 
@@ -271,6 +301,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteChapter(id: string): Promise<void> {
+    // Delete related outlines first
+    await db.delete(outlines).where(eq(outlines.linkedChapterId, id));
+    // Then delete the chapter
     await db.delete(chapters).where(eq(chapters.id, id));
   }
 
@@ -430,6 +463,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Prompt Templates
+  private templateCache: Map<string, PromptTemplate> = new Map();
+
   async getPromptTemplates(projectId?: string): Promise<PromptTemplate[]> {
     if (projectId) {
       return await db
@@ -448,11 +483,34 @@ export class DatabaseStorage implements IStorage {
       .where(eq(promptTemplates.isGlobal, true));
   }
 
+  async getPromptTemplate(id: string): Promise<PromptTemplate | undefined> {
+    // Check cache first
+    if (this.templateCache.has(id)) {
+      return this.templateCache.get(id);
+    }
+
+    // Load from database
+    const [template] = await db
+      .select()
+      .from(promptTemplates)
+      .where(eq(promptTemplates.id, id));
+
+    if (template) {
+      this.templateCache.set(id, template);
+    }
+
+    return template || undefined;
+  }
+
   async createPromptTemplate(insertTemplate: InsertPromptTemplate): Promise<PromptTemplate> {
     const [template] = await db
       .insert(promptTemplates)
       .values(insertTemplate)
       .returning();
+
+    // Update cache
+    this.templateCache.set(template.id, template);
+
     return template;
   }
 
@@ -462,11 +520,22 @@ export class DatabaseStorage implements IStorage {
       .set(updates)
       .where(eq(promptTemplates.id, id))
       .returning();
+
+    // Update cache
+    this.templateCache.set(id, template);
+
     return template;
   }
 
   async deletePromptTemplate(id: string): Promise<void> {
     await db.delete(promptTemplates).where(eq(promptTemplates.id, id));
+
+    // Remove from cache
+    this.templateCache.delete(id);
+  }
+
+  clearTemplateCache(): void {
+    this.templateCache.clear();
   }
 
   // Plot Cards
@@ -476,16 +545,18 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(plotCards)
         .where(
-          and(
-            eq(plotCards.isGlobal, false),
-            eq(plotCards.projectId, projectId)
+          or(
+            eq(plotCards.projectId, projectId),
+            eq(plotCards.isGlobal, true)
           )
-        );
+        )
+        .orderBy(desc(plotCards.createdAt));
     }
     return await db
       .select()
       .from(plotCards)
-      .where(eq(plotCards.isGlobal, true));
+      .where(eq(plotCards.isGlobal, true))
+      .orderBy(desc(plotCards.createdAt));
   }
 
   async createPlotCard(insertCard: InsertPlotCard): Promise<PlotCard> {
@@ -617,6 +688,15 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async updateDraftChunk(id: string, updates: Partial<InsertDraftChunk>): Promise<DraftChunk> {
+    const [updated] = await db
+      .update(draftChunks)
+      .set(updates)
+      .where(eq(draftChunks.id, id))
+      .returning();
+    return updated;
+  }
+
   async deleteDraftChunksByScene(sceneId: string): Promise<void> {
     await db.delete(draftChunks).where(eq(draftChunks.sceneId, sceneId));
   }
@@ -684,12 +764,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Character State History
-  async getCharacterStateHistory(characterId: string): Promise<any[]> {
-    return await db
+  async getCharacterStateHistory(characterId: string, limit?: number): Promise<any[]> {
+    const query = db
       .select()
       .from(characterStateHistory)
       .where(eq(characterStateHistory.characterId, characterId))
       .orderBy(desc(characterStateHistory.createdAt));
+
+    if (limit) {
+      return await query.limit(limit);
+    }
+
+    return await query;
   }
 
   async createCharacterStateHistory(history: any): Promise<any> {
@@ -705,38 +791,49 @@ export class DatabaseStorage implements IStorage {
     templateId: string,
     signatureHash: string
   ): Promise<any[]> {
-    return await db
-      .select()
-      .from(semanticSignatures)
-      .where(
-        and(
-          eq(semanticSignatures.templateId, templateId),
-          eq(semanticSignatures.signatureHash, signatureHash)
-        )
-      )
-      .orderBy(desc(semanticSignatures.qualityScore))
-      .limit(5);
+    try {
+      const { storageCacheExtension } = await import("./storage-cache-extension");
+      const cached = await storageCacheExtension.getCachedExecutions(templateId);
+
+      // Filter by semantic hash similarity
+      return cached
+        .filter((c) => c.semanticHash === signatureHash)
+        .map((c) => ({
+          id: c.id,
+          executionId: c.executionId,
+          templateId: c.templateId,
+          semanticHash: c.semanticHash,
+          qualityScore: c.metadata.quality,
+          hitCount: c.metadata.hitCount,
+          createdAt: c.createdAt,
+        }))
+        .slice(0, 5);
+    } catch (error) {
+      console.error("[Storage] Find similar signatures failed:", error);
+      return [];
+    }
   }
 
   async createSemanticSignature(signature: any): Promise<any> {
-    const [created] = await db
-      .insert(semanticSignatures)
-      .values(signature)
-      .returning();
-    return created;
+    try {
+      const { storageCacheExtension } = await import("./storage-cache-extension");
+      await storageCacheExtension.createCachedExecution(signature);
+      return signature;
+    } catch (error) {
+      console.error("[Storage] Create semantic signature failed:", error);
+      return signature;
+    }
   }
 
   async updateSignatureUsage(signatureId: string): Promise<void> {
-    await db
-      .update(semanticSignatures)
-      .set({
-        reuseCount: sql`${semanticSignatures.reuseCount} + 1`,
-        lastUsedAt: new Date(),
-      })
-      .where(eq(semanticSignatures.id, signatureId));
+    try {
+      const { storageCacheExtension } = await import("./storage-cache-extension");
+      await storageCacheExtension.incrementCacheHitCount(signatureId);
+    } catch (error) {
+      console.error("[Storage] Update signature usage failed:", error);
+    }
   }
 
-  // Character Entity Tracking
   async getCharacter(id: string): Promise<Character | undefined> {
     const [character] = await db
       .select()
@@ -768,6 +865,149 @@ export class DatabaseStorage implements IStorage {
       .where(eq(characters.id, id))
       .returning();
     return updated;
+  }
+
+  // Generation Logs
+  async createGenerationLog(log: InsertGenerationLog): Promise<GenerationLog> {
+    const [created] = await db.insert(generationLogs).values(log).returning();
+    return created;
+  }
+
+  async queryGenerationLogs(filters: {
+    projectId?: string;
+    chapterId?: string;
+    sceneId?: string;
+    templateId?: string;
+    dateRange?: [Date, Date];
+    minQuality?: number;
+    cachePath?: "exact" | "semantic" | "template" | null;
+  }): Promise<GenerationLog[]> {
+    const conditions = [];
+
+    if (filters.projectId) {
+      conditions.push(eq(generationLogs.projectId, filters.projectId));
+    }
+
+    if (filters.chapterId) {
+      conditions.push(eq(generationLogs.chapterId, filters.chapterId));
+    }
+
+    if (filters.sceneId) {
+      conditions.push(eq(generationLogs.sceneId, filters.sceneId));
+    }
+
+    if (filters.templateId) {
+      conditions.push(eq(generationLogs.templateId, filters.templateId));
+    }
+
+    if (filters.cachePath !== undefined) {
+      if (filters.cachePath === null) {
+        conditions.push(isNull(generationLogs.cachePath));
+      } else {
+        conditions.push(eq(generationLogs.cachePath, filters.cachePath));
+      }
+    }
+
+    // Note: Date range and quality filtering would require additional SQL logic
+    // For now, we'll filter in memory after fetching
+
+    const query =
+      conditions.length > 0
+        ? db.select().from(generationLogs).where(and(...conditions))
+        : db.select().from(generationLogs);
+
+    let logs = await query.orderBy(desc(generationLogs.timestamp));
+
+    // Apply date range filter
+    if (filters.dateRange) {
+      const [startDate, endDate] = filters.dateRange;
+      logs = logs.filter(
+        (log) =>
+          log.timestamp >= startDate && log.timestamp <= endDate
+      );
+    }
+
+    // Apply quality filter
+    if (filters.minQuality !== undefined) {
+      logs = logs.filter((log) => {
+        if (log.qualityScore && typeof log.qualityScore === "object") {
+          const quality = (log.qualityScore as any).overall;
+          return quality >= filters.minQuality!;
+        }
+        return false;
+      });
+    }
+
+    return logs;
+  }
+
+  async getGenerationLogByExecutionId(
+    executionId: string
+  ): Promise<GenerationLog | null> {
+    const [log] = await db
+      .select()
+      .from(generationLogs)
+      .where(eq(generationLogs.executionId, executionId));
+
+    return log || null;
+  }
+
+  // Change Sets
+  async getChangeSetsByChapter(chapterId: string): Promise<ChangeSet[]> {
+    return await db
+      .select()
+      .from(changeSets)
+      .where(eq(changeSets.chapterId, chapterId))
+      .orderBy(desc(changeSets.createdAt));
+  }
+
+  async createChangeSet(insertChangeSet: InsertChangeSet): Promise<ChangeSet> {
+    const [changeSet] = await db
+      .insert(changeSets)
+      .values(insertChangeSet)
+      .returning();
+    return changeSet;
+  }
+
+  // System Config
+  async getSystemConfig(key: string): Promise<SystemConfig | null> {
+    const [config] = await db
+      .select()
+      .from(systemConfig)
+      .where(eq(systemConfig.key, key))
+      .limit(1);
+    return config || null;
+  }
+
+  async setSystemConfig(
+    key: string,
+    value: any,
+    environment: string = "production",
+    description?: string
+  ): Promise<SystemConfig> {
+    const [config] = await db
+      .insert(systemConfig)
+      .values({
+        key,
+        value,
+        environment,
+        description,
+      })
+      .onConflictDoUpdate({
+        target: systemConfig.key,
+        set: {
+          value,
+          environment,
+          description,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return config;
+  }
+
+  async getAllSystemConfigs(): Promise<SystemConfig[]> {
+    return await db.select().from(systemConfig);
   }
 }
 

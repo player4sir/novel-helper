@@ -40,7 +40,11 @@ export function GenerateVolumesDialog({ projectId, children }: GenerateVolumesDi
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/volumes", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outlines", projectId] });
+      // Invalidate all outline queries to ensure consistency
+      queryClient.invalidateQueries({ 
+        queryKey: ["/api/outlines"],
+        refetchType: "all" 
+      });
       toast({
         title: "生成成功",
         description: `已生成 ${data.volumes.length} 个卷纲`,

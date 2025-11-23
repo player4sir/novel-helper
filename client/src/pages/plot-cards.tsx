@@ -29,6 +29,7 @@ import { z } from "zod";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
 
 const plotTypeConfig = {
   逆袭: { icon: TrendingUp, color: "text-green-500" },
@@ -46,6 +47,7 @@ const formSchema = insertPlotCardSchema.extend({
 });
 
 export default function PlotCards() {
+  const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -146,7 +148,7 @@ export default function PlotCards() {
             管理可复用的情节模块，快速构建精彩桥段
           </p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+        <Dialog open={dialogOpen} onOpenChange={(open) => open ? setDialogOpen(true) : closeDialog()}>
           <DialogTrigger asChild>
             <Button disabled={!selectedProjectId}>
               <Plus className="h-4 w-4 mr-2" />
@@ -202,15 +204,77 @@ export default function PlotCards() {
 
                   <FormField
                     control={form.control}
+                    name="tags"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>标签</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="使用逗号分隔多个标签，如：爽文,复仇"
+                            value={field.value?.join(",") || ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              field.onChange(val ? val.split(",").map(t => t.trim()).filter(Boolean) : []);
+                            }}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
                     name="content"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>情节内容</FormLabel>
+                        <div className="flex items-center justify-between">
+                          <FormLabel>情节内容</FormLabel>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs text-primary"
+                            onClick={async () => {
+                              const title = form.getValues("title");
+                              const type = form.getValues("type");
+                              const tags = form.getValues("tags");
+
+                              if (!title) {
+                                toast({
+                                  title: "请先输入标题",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+
+                              try {
+                                const res = await apiRequest("POST", "/api/plot-cards/generate", {
+                                  title,
+                                  type,
+                                  tags,
+                                  projectId: selectedProjectId
+                                });
+                                const data = await res.json();
+                                form.setValue("content", data.content);
+                              } catch (error) {
+                                toast({
+                                  title: "生成失败",
+                                  description: "AI生成情节失败，请稍后重试",
+                                  variant: "destructive",
+                                });
+                              }
+                            }}
+                          >
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            AI生成
+                          </Button>
+                        </div>
                         <FormControl>
-                          <Textarea 
-                            placeholder="详细描述情节发展..." 
-                            rows={10} 
-                            {...field} 
+                          <Textarea
+                            placeholder="详细描述情节发展..."
+                            rows={10}
+                            {...field}
                           />
                         </FormControl>
                         <FormMessage />

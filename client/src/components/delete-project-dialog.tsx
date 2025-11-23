@@ -1,19 +1,16 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, Trash2, AlertTriangle, X } from "lucide-react";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Project } from "@shared/schema";
@@ -30,17 +27,17 @@ interface ProjectDependencies {
 
 interface DeleteProjectDialogProps {
   project: Project;
-  children?: React.ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
 }
 
 export function DeleteProjectDialog({
   project,
-  children,
+  open,
+  onOpenChange,
   onSuccess,
 }: DeleteProjectDialogProps) {
-  const [open, setOpen] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -67,11 +64,10 @@ export function DeleteProjectDialog({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
-        title: "删除成功",
-        description: "项目及所有相关数据已删除",
+        title: "已删除",
+        description: `项目《${project.title}》已删除`,
       });
-      setOpen(false);
-      setConfirmed(false);
+      onOpenChange(false);
       onSuccess?.();
     },
     onError: (error: Error) => {
@@ -84,14 +80,6 @@ export function DeleteProjectDialog({
   });
 
   const handleDelete = () => {
-    if (!confirmed) {
-      toast({
-        title: "请确认删除",
-        description: "请勾选确认框以继续删除",
-        variant: "destructive",
-      });
-      return;
-    }
     deleteMutation.mutate();
   };
 
@@ -100,131 +88,115 @@ export function DeleteProjectDialog({
     (dependencies.chapterCount > 0 || dependencies.totalWordCount > 0);
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(newOpen) => {
-        setOpen(newOpen);
-        if (!newOpen) {
-          setConfirmed(false);
-        }
-      }}
-    >
-      <DialogTrigger asChild>
-        {children || (
-          <Button variant="destructive" size="sm">
-            <Trash2 className="h-4 w-4 mr-2" />
-            删除
-          </Button>
-        )}
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader className="space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent className="max-w-md">
+        <AlertDialogHeader>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg">删除项目</AlertDialogTitle>
+                <AlertDialogDescription className="mt-1.5 text-sm">
+                  确定要删除《{project.title}》吗？
+                </AlertDialogDescription>
+              </div>
             </div>
-            <DialogTitle className="text-xl">删除项目</DialogTitle>
           </div>
-          <DialogDescription className="text-base">
-            此操作无法撤销，将永久删除项目及所有相关数据
-          </DialogDescription>
-        </DialogHeader>
+        </AlertDialogHeader>
 
-        <div className="space-y-4 py-2">
-          <Alert variant="destructive" className="border-destructive/50">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription className="font-medium">
-              警告：删除项目《{project.title}》将同时删除所有相关内容
-            </AlertDescription>
-          </Alert>
-
-          {loadingDeps ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : dependencies ? (
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-foreground">将被删除的内容：</p>
-              <ul className="space-y-2 text-sm">
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.volumeCount} 个卷</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.chapterCount} 个章节</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.totalWordCount.toLocaleString()} 字内容</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.outlineCount} 个大纲</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.characterCount} 个角色</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-lg">•</span>
-                  <span>{dependencies.worldSettingCount} 个世界设定</span>
-                </li>
-                {dependencies.hasAIGeneratedContent && (
-                  <li className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
-                    <span className="text-lg">•</span>
-                    <span>AI生成历史记录</span>
-                  </li>
-                )}
-              </ul>
-            </div>
-          ) : null}
-
-          {hasContent && (
-            <div className="flex items-start space-x-3 p-4 bg-muted/50 rounded-lg border border-border">
-              <Checkbox
-                id="confirm-delete"
-                checked={confirmed}
-                onCheckedChange={(checked) => setConfirmed(checked as boolean)}
-                className="mt-0.5"
-              />
-              <div className="flex-1 space-y-1">
-                <Label
-                  htmlFor="confirm-delete"
-                  className="text-sm font-semibold leading-tight cursor-pointer"
-                >
-                  我确认要删除此项目
-                </Label>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  我理解此操作无法撤销，所有数据将永久丢失
+        {loadingDeps ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : dependencies && hasContent ? (
+          <div className="space-y-3 py-2">
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+                <p className="text-sm text-destructive/90">
+                  此操作将永久删除以下内容，且无法恢复
                 </p>
               </div>
             </div>
-          )}
-        </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setOpen(false)}
-            disabled={deleteMutation.isPending}
-            className="flex-1 sm:flex-1"
-          >
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {dependencies.chapterCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.chapterCount}
+                  </span>
+                  <span>个章节</span>
+                </div>
+              )}
+              {dependencies.totalWordCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.totalWordCount.toLocaleString()}
+                  </span>
+                  <span>字</span>
+                </div>
+              )}
+              {dependencies.volumeCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.volumeCount}
+                  </span>
+                  <span>个卷</span>
+                </div>
+              )}
+              {dependencies.characterCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.characterCount}
+                  </span>
+                  <span>个角色</span>
+                </div>
+              )}
+              {dependencies.outlineCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.outlineCount}
+                  </span>
+                  <span>个大纲</span>
+                </div>
+              )}
+              {dependencies.worldSettingCount > 0 && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {dependencies.worldSettingCount}
+                  </span>
+                  <span>个设定</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <AlertDialogFooter className="gap-2 sm:gap-2">
+          <AlertDialogCancel disabled={deleteMutation.isPending}>
             取消
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending || (hasContent && !confirmed)}
-            className="flex-1 sm:flex-1"
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              handleDelete();
+            }}
+            disabled={deleteMutation.isPending}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {deleteMutation.isPending && (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            {deleteMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                删除中
+              </>
+            ) : (
+              "确认删除"
             )}
-            {deleteMutation.isPending ? "删除中..." : "确认删除"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

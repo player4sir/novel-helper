@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -20,14 +20,14 @@ interface ProjectSelectorProps {
   projects: Project[];
   selectedProjectId: string | null;
   onSelectProject: (projectId: string) => void;
-  onNewProject: () => void;
+
 }
 
 export function ProjectSelector({
   projects,
   selectedProjectId,
   onSelectProject,
-  onNewProject,
+
 }: ProjectSelectorProps) {
   const [open, setOpen] = useState(false);
 
@@ -66,11 +66,10 @@ export function ProjectSelector({
                   data-testid={`option-project-${project.id}`}
                 >
                   <Check
-                    className={`mr-2 h-4 w-4 ${
-                      selectedProjectId === project.id
-                        ? "opacity-100"
-                        : "opacity-0"
-                    }`}
+                    className={`mr-2 h-4 w-4 ${selectedProjectId === project.id
+                      ? "opacity-100"
+                      : "opacity-0"
+                      }`}
                   />
                   <div className="flex-1 overflow-hidden">
                     <div className="font-medium truncate">{project.title}</div>
@@ -81,18 +80,7 @@ export function ProjectSelector({
                 </CommandItem>
               ))}
             </CommandGroup>
-            <CommandGroup>
-              <CommandItem
-                onSelect={() => {
-                  onNewProject();
-                  setOpen(false);
-                }}
-                data-testid="button-new-project-command"
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                <span>新建项目</span>
-              </CommandItem>
-            </CommandGroup>
+
           </CommandList>
         </Command>
       </PopoverContent>

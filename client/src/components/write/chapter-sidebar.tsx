@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
-import { 
-  Plus, 
-  Layers, 
-  FileText, 
-  MoreVertical, 
-  Trash2, 
-  ChevronRight, 
+import {
+  Plus,
+  Layers,
+  FileText,
+  MoreVertical,
+  Trash2,
+  ChevronRight,
   ChevronDown,
   CheckCircle2,
   AlertTriangle,
-  Users
+  Users,
+  Sparkles
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { apiRequest } from "@/lib/queryClient";
 import { generateChapterTitle } from "@/lib/number-utils";
+import { AppendChaptersDialog } from "@/components/outlines/append-chapters-dialog";
 import type { Chapter, Volume, Outline, SceneFrame, DraftChunk } from "@shared/schema";
 
 interface ChapterSidebarProps {
@@ -70,12 +72,12 @@ export function ChapterSidebar({
       // Calculate chapter number based on volume or global
       let chapterNumber: number;
       let maxOrderIndex = 0;
-      
+
       if (volumeId) {
         // Volume-specific numbering: count chapters in this volume
         const volumeChapters = chapters.filter(c => c.volumeId === volumeId);
         chapterNumber = volumeChapters.length + 1;
-        
+
         // Calculate orderIndex: max orderIndex in volume + 1
         if (volumeChapters.length > 0) {
           maxOrderIndex = Math.max(...volumeChapters.map(c => c.orderIndex));
@@ -83,13 +85,13 @@ export function ChapterSidebar({
       } else {
         // Global numbering: count all chapters (for display purposes)
         chapterNumber = chapters.length + 1;
-        
+
         // Calculate orderIndex: max orderIndex across all chapters + 1
         if (chapters.length > 0) {
           maxOrderIndex = Math.max(...chapters.map(c => c.orderIndex));
         }
       }
-      
+
       return await apiRequest("POST", "/api/chapters", {
         projectId,
         volumeId: volumeId || null,
@@ -102,6 +104,11 @@ export function ChapterSidebar({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/chapters", projectId] });
+      // Invalidate outlines as chapter creation now auto-generates outlines
+      queryClient.invalidateQueries({
+        queryKey: ["/api/outlines"],
+        refetchType: "all"
+      });
     },
   });
 
@@ -111,6 +118,11 @@ export function ChapterSidebar({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/chapters", projectId] });
+      // Invalidate all outline queries as chapter outlines may be affected
+      queryClient.invalidateQueries({
+        queryKey: ["/api/outlines"],
+        refetchType: "all"
+      });
     },
   });
 
@@ -130,7 +142,7 @@ export function ChapterSidebar({
   // Group chapters by volume
   const chaptersWithoutVolume = sortedChapters.filter((c) => !c.volumeId);
   const chaptersByVolume = new Map<string, Chapter[]>();
-  
+
   sortedVolumes.forEach((volume) => {
     const volumeChapters = sortedChapters.filter((c) => c.volumeId === volume.id);
     if (volumeChapters.length > 0) {
@@ -183,7 +195,7 @@ export function ChapterSidebar({
               {sortedVolumes.map((volume) => {
                 const volumeChapters = chaptersByVolume.get(volume.id) || [];
                 if (volumeChapters.length === 0) return null;
-                
+
                 const isExpanded = expandedVolumes.has(volume.id);
                 const volumeWordCount = volumeChapters.reduce((sum, c) => sum + (c.wordCount || 0), 0);
 
@@ -220,6 +232,23 @@ export function ChapterSidebar({
                       >
                         <Plus className="h-3 w-3" />
                       </Button>
+
+                      <AppendChaptersDialog
+                        projectId={projectId}
+                        volumeId={volume.id}
+                        volumeTitle={volume.title}
+                        currentChapterCount={volumeChapters.length}
+                      >
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                          title="AI 批量追加章节"
+                        >
+                          <Sparkles className="h-3 w-3 text-purple-500" />
+                        </Button>
+                      </AppendChaptersDialog>
                     </div>
 
                     {isExpanded && (
@@ -300,14 +329,14 @@ function ChapterItem({
     queryKey: ["/api/draft-chunks", chapter.id],
     queryFn: async () => {
       if (!scenes || scenes.length === 0) return [];
-      
+
       // Fetch drafts for all scenes
       const draftPromises = scenes.map(async (scene) => {
         const res = await fetch(`/api/draft-chunks/${scene.id}`);
         if (!res.ok) return [];
         return res.json();
       });
-      
+
       const draftsArrays = await Promise.all(draftPromises);
       return draftsArrays.flat();
     },
@@ -317,7 +346,7 @@ function ChapterItem({
   const plotNodes = outline?.plotNodes as any;
   const beats = plotNodes?.beats || [];
   const requiredEntities = plotNodes?.requiredEntities || [];
-  
+
   // Calculate rule check statistics
   const totalDrafts = allDrafts?.length || 0;
   const passedDrafts = allDrafts?.filter(d => d.ruleCheckPassed).length || 0;
@@ -329,9 +358,8 @@ function ChapterItem({
 
   return (
     <div
-      className={`group p-2.5 rounded-md cursor-pointer transition-colors ${
-        isSelected ? "bg-sidebar-accent" : "hover:bg-muted/50"
-      }`}
+      className={`group p-2.5 rounded-md cursor-pointer transition-colors ${isSelected ? "bg-sidebar-accent" : "hover:bg-muted/50"
+        }`}
       onClick={onSelect}
       data-testid={`chapter-item-${chapter.id}`}
     >
@@ -343,22 +371,22 @@ function ChapterItem({
               {chapter.title}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-1.5 flex-wrap text-xs">
             <span className="text-muted-foreground">{chapter.wordCount || 0} 字</span>
-            
+
             {scenes && scenes.length > 0 && (
               <Badge variant="outline" className="text-xs h-4 px-1">
                 {scenes.length} 场景
               </Badge>
             )}
-            
+
             {beats.length > 0 && (
               <Badge variant="outline" className="text-xs h-4 px-1">
                 {beats.length} 节拍
               </Badge>
             )}
-            
+
             {/* Rule check status */}
             {totalDrafts > 0 && (
               <>
@@ -382,7 +410,7 @@ function ChapterItem({
                 )}
               </>
             )}
-            
+
             <Badge
               variant={statusLabels[chapter.status]?.variant || "secondary"}
               className="text-xs h-4 px-1.5"

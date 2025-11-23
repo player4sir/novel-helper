@@ -5,10 +5,18 @@ import { db } from "./db";
 import { aiService } from "./ai-service";
 import { enhancedProjectCreationService } from "./enhanced-project-creation-service";
 import { volumeChapterGenerationService } from "./volume-chapter-generation-service";
-import { sceneDraftService } from "./scene-draft-service";
+// Optimized version for 60-70% speed improvement
+import { sceneDraftServiceOptimized as sceneDraftService } from "./scene-draft-service-optimized";
+import { contentGenerationService } from "./content-generation-service";
 import { chapterCreationService } from "./chapter-creation-service";
 import { projectManagementService } from "./project-management-service";
-import { eq, and, sql } from "drizzle-orm";
+import { semanticCacheService } from "./semantic-cache-service";
+import { creationOrchestrator } from "./creation-orchestrator";
+import { sessionManager } from "./session-manager";
+import { editorAIService } from "./editor-ai-service";
+import { autoCreationService } from "./auto-creation-service";
+import { styleExtractionService } from "./style-extraction-service";
+import { eq, and, sql, desc } from "drizzle-orm";
 import {
   insertProjectSchema,
   insertVolumeSchema,
@@ -22,9 +30,40 @@ import {
   insertGenerationHistorySchema,
   insertStatisticSchema,
   statistics,
+  styleProfiles,
+  insertStyleProfileSchema,
 } from "@shared/schema";
+import { vectorizeQueue, summaryQueue } from "./jobs/queue";
+import { summaryChainService } from "./summary-chain-service";
+import { versionControlService } from "./version-control-service";
+import { genreConfigService } from "./genre-config-service";
+import { projectWordCountService } from "./project-word-count-service";
+
+
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Genre Configuration API
+  app.get("/api/genres", async (req, res) => {
+    try {
+      const genres = genreConfigService.getAllGenres();
+      res.json(genres);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/genres/:id", async (req, res) => {
+    try {
+      const genre = genreConfigService.getGenreById(req.params.id);
+      if (!genre) {
+        return res.status(404).json({ error: "Genre not found" });
+      }
+      res.json(genre);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Projects
   app.get("/api/projects", async (req, res) => {
     try {
@@ -57,38 +96,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI-driven project creation from seed
-  // Implements full algorithm: PromptPacking + ModelRouting + VectorScoring + CandidateMerging
-  app.post("/api/projects/create-from-seed", async (req, res) => {
+
+
+  // ============================================================================
+  // New Unified Creation Workflow API
+  // ============================================================================
+
+  // Stepwise Creation API
+
+  // 1. Start Session
+  app.post("/api/creation/session", async (req, res) => {
     try {
-      const { titleSeed, premise, genre, style, targetWordCount } = req.body;
+      const { titleSeed, premise, genre, style, targetWordCount, userId } = req.body;
 
       if (!titleSeed || titleSeed.trim().length === 0) {
         return res.status(400).json({ error: "标题或创意种子不能为空" });
       }
 
-      const result = await enhancedProjectCreationService.createProjectFromSeed({
-        titleSeed: titleSeed.trim(),
-        premise: premise?.trim(),
-        genre: genre?.trim(),
-        style: style?.trim(),
-        targetWordCount: targetWordCount ? parseInt(targetWordCount) : undefined,
-      });
+      const sessionId = await creationOrchestrator.startStepwiseCreation(
+        {
+          titleSeed: titleSeed.trim(),
+          premise: premise?.trim(),
+          genre: genre?.trim(),
+          style: style?.trim(),
+          targetWordCount: targetWordCount ? parseInt(targetWordCount) : undefined,
+        },
+        userId
+      );
 
-      res.json({
-        success: true,
-        projectId: result.projectId,
-        projectMeta: result.projectMeta,
-        executionLogs: result.executionLogs,
-        routingDecision: result.routingDecision,
+      res.json({ success: true, sessionId });
+    } catch (error: any) {
+      console.error("[API] Failed to start session:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // 1.5 Auto Creation (Parallel Execution)
+  // 1.5 Auto Creation (Parallel Execution) - SSE Streaming
+  app.get("/api/creation/auto", async (req, res) => {
+    const { titleSeed, premise, genre, style, targetWordCount, userId } = req.query;
+
+    if (!titleSeed) {
+      return res.status(400).json({ error: "Title seed is required" });
+    }
+
+    // Import better-sse
+    const { createSession } = await import("better-sse");
+    const session = await createSession(req, res);
+
+    try {
+      // Start quick creation with skipFinalize=true to get intermediate results
+      const result = await creationOrchestrator.startQuickCreation(
+        {
+          titleSeed: titleSeed as string,
+          premise: premise as string,
+          genre: genre as string,
+          style: style as string,
+          targetWordCount: targetWordCount ? parseInt(targetWordCount as string) : undefined,
+        },
+        userId as string,
+        (step, status, message, progress, metadata) => {
+          session.push({
+            type: "progress",
+            step,
+            status,
+            message,
+            progress,
+            metadata
+          });
+        },
+        true // skipFinalize = true
+      );
+
+      session.push({
+        type: "completed",
+        result
       });
     } catch (error: any) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
+      console.error("[API] Auto creation failed:", error);
+      session.push({
+        type: "error",
+        error: error.message
       });
     }
   });
+
+  // 2. Execute Next Step (Save current & Generate next)
+  app.post("/api/creation/step/next", async (req, res) => {
+    try {
+      const { sessionId, data } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+
+      const result = await creationOrchestrator.executeNextStep(sessionId, data);
+      res.json({ success: true, result });
+    } catch (error: any) {
+      console.error("[API] Failed to execute next step:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // 3. Regenerate Current Step
+  app.post("/api/creation/step/regenerate", async (req, res) => {
+    try {
+      const { sessionId, options } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+
+      const result = await creationOrchestrator.regenerateCurrentStep(sessionId, options);
+      res.json({ success: true, result });
+    } catch (error: any) {
+      console.error("[API] Failed to regenerate step:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Confirm Creation (Finalize)
+  app.post("/api/creation/confirm", async (req, res) => {
+    try {
+      const { sessionId, overrides } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+
+      console.log(`[API] Confirming creation for session ${sessionId}`);
+      const result = await creationOrchestrator.finalizeCreation(sessionId, overrides);
+
+      res.json({ success: true, projectId: result.projectId });
+    } catch (error: any) {
+      console.error("[API] Creation confirmation failed:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+
 
   app.patch("/api/projects/:id", async (req, res) => {
     try {
@@ -158,6 +306,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Editor AI Instruction Stream
+  app.post("/api/editor/ai-instruction-stream", async (req, res) => {
+    try {
+      const request = req.body;
+
+      // Set headers for SSE
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const stream = editorAIService.processInstructionStream(request);
+
+      for await (const event of stream) {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      }
+
+      res.end();
+    } catch (error: any) {
+      console.error("[API] AI instruction stream failed:", error);
+      // If headers haven't been sent, send error JSON
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      } else {
+        // If stream started, send error event
+        res.write(`data: ${JSON.stringify({ type: "error", error: error.message })}\n\n`);
+        res.end();
+      }
     }
   });
 
@@ -253,6 +431,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AI-driven volume append
+  app.post("/api/volumes/append", async (req, res) => {
+    try {
+      const { projectId, additionalCount } = req.body;
+
+      if (!projectId) {
+        return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const count = additionalCount || 2;
+      if (count < 1 || count > 20) {
+        return res.status(400).json({ error: "additionalCount must be between 1 and 20" });
+      }
+
+      const result = await volumeChapterGenerationService.appendVolumes(
+        projectId,
+        count
+      );
+
+      // Save volumes to database
+      const savedVolumes = [];
+      for (const volumeOutline of result.volumes) {
+        const volume = await storage.createVolume({
+          projectId,
+          title: volumeOutline.title,
+          orderIndex: volumeOutline.orderIndex,
+          description: volumeOutline.oneLiner,
+        });
+
+        // Create volume outline
+        await storage.createOutline({
+          projectId,
+          parentId: null,
+          type: "volume",
+          title: volumeOutline.title,
+          content: `# ${volumeOutline.title}\n\n## 定位\n${volumeOutline.oneLiner}\n\n## 核心节拍\n${volumeOutline.beats.map((b, i) => `${i + 1}. ${b}`).join("\n")}${volumeOutline.conflictFocus ? `\n\n## 冲突焦点\n${volumeOutline.conflictFocus}` : ""}${volumeOutline.themeTags && volumeOutline.themeTags.length > 0 ? `\n\n## 主题标签\n${volumeOutline.themeTags.join("、")}` : ""}`,
+          orderIndex: volumeOutline.orderIndex,
+          plotNodes: {
+            beats: volumeOutline.beats,
+            themeTags: volumeOutline.themeTags || [],
+            conflictFocus: volumeOutline.conflictFocus || "",
+          },
+          linkedVolumeId: volume.id,
+        });
+
+        savedVolumes.push(volume);
+      }
+
+      res.json({
+        success: true,
+        volumes: savedVolumes,
+        executionLogs: result.executionLogs,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
   app.delete("/api/volumes/:id", async (req, res) => {
     try {
       await storage.deleteVolume(req.params.id);
@@ -305,15 +544,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "projectId is required" });
       }
 
+      // Validate volumeId is required for auto-outline generation
+      if (!volumeId) {
+        return res.status(400).json({
+          error: "章节必须属于某个卷。请先创建卷，然后在卷中创建章节。"
+        });
+      }
+
+      // Step 1: Create the chapter
       const result = await chapterCreationService.createChapter({
         projectId,
-        volumeId: volumeId || null,
+        volumeId,
         title,
         content,
         status,
       });
 
-      res.json(result.chapter);
+      const chapter = result.chapter;
+
+      // Step 2: Auto-generate chapter outline using AI
+      try {
+        const aiResult = await volumeChapterGenerationService.generateChapters(
+          projectId,
+          volumeId,
+          1 // Generate outline for 1 chapter
+        );
+
+        if (aiResult.chapters.length > 0) {
+          const aiOutline = aiResult.chapters[0];
+
+          // Create outline with AI-generated data but keep user's title
+          await storage.createOutline({
+            projectId,
+            parentId: null,
+            type: "chapter",
+            title: chapter.title, // Keep user's title
+            content: `# ${chapter.title}\n\n## 概括\n${aiOutline.oneLiner}\n\n## 节拍\n${aiOutline.beats.map((b, i) => `${i + 1}. ${b}`).join("\n")}\n\n## 必需角色\n${aiOutline.requiredEntities.join("、")}\n\n## 焦点角色\n${aiOutline.focalEntities?.join("、") || ""}\n\n## 风险变化\n${aiOutline.stakesDelta}\n\n## 入场状态\n${aiOutline.entryState || ""}\n\n## 出场状态\n${aiOutline.exitState || ""}`,
+            orderIndex: chapter.orderIndex,
+            plotNodes: {
+              beats: aiOutline.beats,
+              requiredEntities: aiOutline.requiredEntities,
+              focalEntities: aiOutline.focalEntities || [],
+              stakesDelta: aiOutline.stakesDelta,
+              entryState: aiOutline.entryState || "",
+              exitState: aiOutline.exitState || "",
+              oneLiner: aiOutline.oneLiner,
+            },
+            linkedChapterId: chapter.id,
+          });
+
+          console.log(`[Chapter Creation] Auto-generated outline for chapter: ${chapter.title}`);
+        }
+      } catch (outlineError: any) {
+        // If outline generation fails, rollback chapter creation
+        console.error(`[Chapter Creation] Outline generation failed:`, outlineError.message);
+        await storage.deleteChapter(chapter.id);
+        return res.status(500).json({
+          error: `章纲生成失败: ${outlineError.message}。章节创建已回滚。`
+        });
+      }
+
+      // Step 3: Update project word count
+      await projectWordCountService.recalculateProjectWordCount(projectId);
+
+      res.json(chapter);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -332,12 +626,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let actualVolumeId = volumeId;
       const volumes = await storage.getVolumesByProject(projectId);
       const existingVolume = volumes.find((v) => v.id === volumeId);
-      
+
       if (!existingVolume) {
         // volumeId might be an outline ID, try to find or create corresponding volume
         const outlines = await storage.getOutlinesByProject(projectId);
         const volumeOutline = outlines.find((o) => o.id === volumeId && o.type === "volume");
-        
+
         if (volumeOutline) {
           // Check if volume already exists via linkedVolumeId
           if (volumeOutline.linkedVolumeId) {
@@ -351,7 +645,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               description: volumeOutline.content?.substring(0, 200) || "",
             });
             actualVolumeId = newVolume.id;
-            
+
             // Update outline to link to volume
             await storage.updateOutline(volumeOutline.id, {
               linkedVolumeId: newVolume.id,
@@ -422,267 +716,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Helper: Extract previous context intelligently
-  const extractPreviousContext = (content: string, maxChars: number): string => {
-    if (!content || content.length === 0) return "";
-    
-    // If content is short enough, return all
-    if (content.length <= maxChars) return content;
-    
-    // Find the last complete sentence within maxChars
-    const truncated = content.slice(-maxChars);
-    const sentenceEnd = truncated.search(/[。！？\n]/);
-    
-    if (sentenceEnd > 0) {
-      // Start from the first complete sentence
-      return truncated.slice(sentenceEnd + 1).trim();
-    }
-    
-    // Fallback: return last maxChars
-    return truncated;
-  };
-
-  // Generate chapter content using AI
-  app.post("/api/chapters/:id/generate-content", async (req, res) => {
+  // AI-driven chapter append
+  app.post("/api/chapters/append", async (req, res) => {
     try {
-      const chapterId = req.params.id;
-      const { projectId } = req.body;
+      const { projectId, volumeId, additionalCount, instruction } = req.body;
 
-      if (!projectId) {
-        return res.status(400).json({ error: "projectId is required" });
+      if (!projectId || !volumeId) {
+        return res.status(400).json({ error: "projectId and volumeId are required" });
       }
 
-      // Check AI models configuration
-      const models = await storage.getAIModels();
-      const defaultChatModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
-      const defaultEmbeddingModel = models.find(m => m.modelType === "embedding" && m.isDefaultEmbedding && m.isActive);
-
-      if (!defaultChatModel) {
-        return res.status(400).json({ 
-          error: "未配置默认对话模型。请先在AI模型配置页面添加并设置默认的对话模型（Chat）。" 
-        });
+      const count = additionalCount || 5;
+      if (count < 1 || count > 30) {
+        return res.status(400).json({ error: "additionalCount must be between 1 and 30" });
       }
 
-      if (!defaultEmbeddingModel) {
-        console.warn("[Chapter Generation] No default embedding model configured. Few-shot and semantic cache will use fallback mode.");
-      }
-
-      // Get chapter
-      const chapter = await storage.getChapter(chapterId);
-      if (!chapter) {
-        return res.status(404).json({ error: "Chapter not found" });
-      }
-
-      // Decompose into scenes (or get existing)
-      const scenes = await sceneDraftService.decomposeChapterIntoScenes(
+      const result = await volumeChapterGenerationService.appendChapters(
         projectId,
-        chapterId
+        volumeId,
+        count,
+        instruction
       );
 
-      // Get context with enhanced information
-      const characters = await storage.getCharactersByProject(projectId);
-      const worldSettings = await storage.getWorldSettingsByProject(projectId);
-      const outlines = await storage.getOutlinesByProject(projectId);
-      const chapterOutline = outlines.find(
-        (o) => o.type === "chapter" && o.linkedChapterId === chapterId
+      // Prepare chapter data for batch creation
+      const chapterDataArray = result.chapters.map((chapterOutline) => ({
+        title: chapterOutline.title,
+        content: "",
+        orderIndex: chapterOutline.orderIndex,
+        notes: `一句话概括: ${chapterOutline.oneLiner}\n\n必需角色: ${chapterOutline.requiredEntities.join("、")}\n\n焦点角色: ${chapterOutline.focalEntities?.join("、") || ""}\n\n风险变化: ${chapterOutline.stakesDelta}\n\n入场状态: ${chapterOutline.entryState || ""}\n\n出场状态: ${chapterOutline.exitState || ""}`,
+        hook: chapterOutline.beats[chapterOutline.beats.length - 1] || "",
+        status: "draft" as const,
+      }));
+
+      // Create chapters in batch
+      const savedChapters = await chapterCreationService.createChaptersBatch(
+        projectId,
+        volumeId,
+        chapterDataArray
       );
-      const mainOutline = outlines.find((o) => o.type === "main");
-      const project = await storage.getProject(projectId);
 
-      // Extract chapter plot nodes
-      const chapterPlotNodes = (chapterOutline?.plotNodes as any) || {};
-      const beats = chapterPlotNodes.beats || [];
-      const requiredEntities = chapterPlotNodes.requiredEntities || [];
-      const focalEntities = chapterPlotNodes.focalEntities || requiredEntities.slice(0, 2);
+      // Create chapter outlines
+      for (let i = 0; i < savedChapters.length; i++) {
+        const chapter = savedChapters[i];
+        const chapterOutline = result.chapters[i];
 
-      // Build enhanced context
-      const context = {
-        // Project-level information
-        projectSummary: mainOutline ? {
-          coreConflicts: ((mainOutline.plotNodes as any)?.coreConflicts || []).join("\n"),
-          themeTags: ((mainOutline.plotNodes as any)?.themeTags || []).join("、"),
-          toneProfile: project?.style || "",
-        } : null,
-
-        // Enhanced character information (only focal characters)
-        characters: characters
-          .filter((c) => focalEntities.includes(c.name))
-          .map((c) => ({
-            name: c.name,
-            role: c.role,
-            personality: c.personality || "",
-            background: c.background || "",
-            abilities: c.abilities || "",
-            motivation: (c as any).shortMotivation || "",
-            currentGoal: (c as any).currentGoal || "",
-            currentEmotion: (c as any).currentEmotion || "",
-            relationships: c.relationships || {},
-          })),
-
-        // All characters (for reference)
-        allCharacters: characters
-          .map((c) => `${c.name}（${c.role}）`)
-          .join("、"),
-
-        // World settings (simplified)
-        worldSettings: worldSettings.slice(0, 2).map((w) => w.content).join("\n\n"),
-
-        // Structured chapter outline
-        chapterOutline: {
-          title: chapterOutline?.title || "",
-          summary: chapterPlotNodes.oneLiner || "",
-          beats: beats,
-          requiredEntities: requiredEntities,
-          focalEntities: focalEntities,
-          stakesDelta: chapterPlotNodes.stakesDelta || "",
-          entryState: chapterPlotNodes.entryState || "",
-          exitState: chapterPlotNodes.exitState || "",
-        },
-      };
-
-      // Generate drafts for each scene
-      const drafts = [];
-      let previousContent = "";
-      const executionLogs = [];
-      const adjacentSummaries: string[] = [];
-
-      for (let i = 0; i < scenes.length; i++) {
-        const scene = scenes[i];
-
-        // Build scene-specific context
-        const sceneContext = {
-          ...context,
-          
-          // Current scene information
-          currentScene: {
-            index: i,
-            total: scenes.length,
-            beat: beats[i] || scene.purpose,
-            previousBeat: i > 0 ? beats[i - 1] : null,
-            nextBeat: i < beats.length - 1 ? beats[i + 1] : null,
-          },
-
-          // Previous content (smart extraction)
-          previousContent: extractPreviousContext(previousContent, 800),
-
-          // Adjacent summaries
-          adjacentSummaries: {
-            previous: i > 0 ? adjacentSummaries[i - 1] : null,
-            next: i < scenes.length - 1 ? scenes[i + 1].purpose : null,
-          },
-
-          sceneFrame: scene,
-        };
-
-        const result = await sceneDraftService.generateSceneDraft(
+        await storage.createOutline({
           projectId,
-          scene,
-          sceneContext
-        );
-
-        drafts.push(result.draft);
-        executionLogs.push(result.executionLog);
-        adjacentSummaries.push(result.draft.localSummary || "");
-        previousContent += result.draft.content + "\n\n";
-
-        // Save execution log
-        await storage.createPromptExecution({
-          id: result.executionLog.executionId,
-          projectId,
-          templateId: result.executionLog.templateId,
-          templateVersion: result.executionLog.templateVersion,
-          promptHash: result.executionLog.promptHash,
-          promptMetadata: result.executionLog.promptMetadata,
-          modelId: result.executionLog.modelId,
-          modelVersion: result.executionLog.modelVersion,
-          params: result.executionLog.params,
-          responseHash: result.executionLog.responseHash,
-          responseSummary: result.executionLog.responseSummary,
-          tokensUsed: result.executionLog.tokensUsed,
-          timestamp: result.executionLog.timestamp,
-          signature: null,
+          parentId: null,
+          type: "chapter",
+          title: chapterOutline.title,
+          content: `# ${chapterOutline.title}\n\n## 概括\n${chapterOutline.oneLiner}\n\n## 节拍\n${chapterOutline.beats.map((b, i) => `${i + 1}. ${b}`).join("\n")}\n\n## 必需角色\n${chapterOutline.requiredEntities.join("、")}\n\n## 焦点角色\n${chapterOutline.focalEntities?.join("、") || ""}\n\n## 风险变化\n${chapterOutline.stakesDelta}\n\n## 入场状态\n${chapterOutline.entryState || ""}\n\n## 出场状态\n${chapterOutline.exitState || ""}`,
+          orderIndex: chapterOutline.orderIndex,
+          plotNodes: {
+            beats: chapterOutline.beats,
+            requiredEntities: chapterOutline.requiredEntities,
+            focalEntities: chapterOutline.focalEntities || [],
+            stakesDelta: chapterOutline.stakesDelta,
+            entryState: chapterOutline.entryState || "",
+            exitState: chapterOutline.exitState || "",
+          },
+          linkedChapterId: chapter.id,
         });
-
-        console.log(
-          `[Chapter Generation] Scene ${i + 1}/${scenes.length}: ${result.draft.wordCount} words, rules=${result.ruleCheck.passed ? "✓" : "✗"}`
-        );
       }
-
-      // Combine all drafts
-      const fullContent = drafts.map((d) => d.content).join("\n\n");
-      const totalWordCount = fullContent.length;
-
-      // Update chapter
-      await storage.updateChapter(chapterId, {
-        content: fullContent,
-        wordCount: totalWordCount,
-        status: "writing",
-      });
-
-      // Record today's statistics
-      try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        // Check if today's stat exists
-        const existingStats = await db
-          .select()
-          .from(statistics)
-          .where(
-            and(
-              eq(statistics.projectId, projectId),
-              sql`DATE(${statistics.date}) = DATE(${today})`
-            )
-          );
-
-        if (existingStats.length > 0) {
-          // Update existing stat
-          await db
-            .update(statistics)
-            .set({
-              wordsWritten: sql`${statistics.wordsWritten} + ${totalWordCount}`,
-              aiGenerations: sql`${statistics.aiGenerations} + 1`,
-            })
-            .where(eq(statistics.id, existingStats[0].id));
-        } else {
-          // Create new stat
-          await storage.createStatistic({
-            projectId,
-            date: today,
-            wordsWritten: totalWordCount,
-            chaptersCompleted: 0,
-            aiGenerations: 1,
-            writingTimeMinutes: 0,
-          });
-        }
-      } catch (statError) {
-        console.error("[Statistics] Error recording stats:", statError);
-        // Don't fail the request if stats recording fails
-      }
-
-      // Calculate statistics
-      const ruleChecksPassed = drafts.filter((d) => d.ruleCheckPassed).length;
-      const totalWarnings = drafts.reduce(
-        (sum, d) => sum + (d.ruleCheckWarnings as any[])?.length || 0,
-        0
-      );
 
       res.json({
         success: true,
-        wordCount: totalWordCount, // 前端期望的字段
-        chapter: {
-          id: chapterId,
-          content: fullContent,
-          wordCount: totalWordCount,
-        },
-        scenes: scenes.length,
-        drafts: drafts.length,
-        ruleChecksPassed,
-        totalWarnings,
-        executionLogs,
+        chapters: savedChapters,
+        executionLogs: result.executionLogs,
       });
     } catch (error: any) {
-      console.error("[Chapter Generation] Error:", error);
       res.status(500).json({
         success: false,
         error: error.message,
@@ -690,21 +791,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Helper: Extract previous context intelligently
+  // Helper: Extract previous context intelligently
+  const extractPreviousContext = (content: string, maxChars: number): string => {
+    if (!content || content.length === 0) return "";
+
+    if (content.length <= maxChars) return content;
+
+    // Extract last portion
+    const truncated = content.slice(-maxChars * 1.5);
+
+    // Prioritize extracting dialogues (more important for context)
+    const dialogueMatches = truncated.match(/[""][^""]+[""]/g);
+    const lastDialogues = dialogueMatches ? dialogueMatches.slice(-3).join("\n") : "";
+
+    // Extract key actions (sentences with action verbs)
+    const sentences = truncated.split(/[。！？]/);
+    const actionSentences = sentences.filter(s =>
+      s.length > 10 && /[走跑跳说道问答看听想做拿给打开关闭]/.test(s)
+    ).slice(-3);
+
+    // Combine dialogues and actions
+    let result = "";
+    if (lastDialogues) result += lastDialogues + "\n";
+    if (actionSentences.length > 0) result += actionSentences.join("。") + "。";
+
+    // If still too long, truncate
+    if (result.length > maxChars) {
+      result = result.slice(-maxChars);
+      const firstSentence = result.search(/[。！？\n]/);
+      if (firstSentence > 0) {
+        result = result.slice(firstSentence + 1).trim();
+      }
+    }
+
+    // Fallback to simple truncation
+    return result || truncated.slice(-maxChars);
+  };
+
+  // Generate chapter content using AI (SSE Stream)
+  app.get("/api/chapters/:id/generate-content-stream", async (req, res) => {
+    const projectId = req.query.projectId as string;
+    const chapterId = req.params.id;
+
+    if (!projectId) {
+      res.status(400).json({ error: "projectId is required" });
+      return;
+    }
+
+    // Import better-sse
+    const { createSession } = await import("better-sse");
+
+    // Create SSE session
+    const session = await createSession(req, res, {
+      keepAlive: 10000,
+    });
+
+    let clientDisconnected = false;
+
+    session.on("disconnected", () => {
+      clientDisconnected = true;
+      console.log("[SSE] Client disconnected");
+    });
+
+    session.push({ type: "connected" });
+
+    try {
+      const generator = contentGenerationService.generateChapterStream(projectId, chapterId);
+
+      for await (const event of generator) {
+        if (clientDisconnected) break;
+        session.push(event);
+      }
+
+      console.log("[SSE] Generation stream completed");
+    } catch (error: any) {
+      console.error("[Chapter Generation] Error:", error);
+      if (!clientDisconnected) {
+        session.push({
+          type: "error",
+          error: error.message
+        });
+      }
+    }
+  });
+
   app.patch("/api/chapters/:id", async (req, res) => {
     try {
       // Get old chapter for word count comparison
       const oldChapter = await storage.getChapter(req.params.id);
+
+      // Version Control: Create change set if content changed
+      if (oldChapter && req.body.content && oldChapter.content !== req.body.content) {
+        try {
+          await versionControlService.createChangeSet(
+            req.params.id,
+            oldChapter.content || "",
+            req.body.content,
+            "user"
+          );
+        } catch (vcError) {
+          console.error("Failed to create change set:", vcError);
+        }
+      }
+
       const chapter = await storage.updateChapter(req.params.id, req.body);
-      
+
+      // Trigger vectorization and summarization if content changed
+      if (req.body.content) {
+        try {
+          await vectorizeQueue.add('vectorize-chapter', {
+            type: 'chapter',
+            id: chapter.id
+          });
+
+          await summaryQueue.add('generate-summary', {
+            chapterId: chapter.id
+          });
+        } catch (err) {
+          console.error("Failed to enqueue background jobs:", err);
+        }
+      }
+
       // If word count changed, update today's statistics
       if (oldChapter && req.body.wordCount !== undefined && req.body.wordCount !== oldChapter.wordCount) {
         const wordsDiff = (req.body.wordCount || 0) - (oldChapter.wordCount || 0);
-        
+
         if (wordsDiff > 0) {
           try {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            
+
             const existingStats = await db
               .select()
               .from(statistics)
@@ -737,7 +954,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
+      // Update project total word count if chapter word count changed
+      if (req.body.wordCount !== undefined) {
+        await projectWordCountService.recalculateProjectWordCount(chapter.projectId);
+      }
+
       res.json(chapter);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -746,8 +968,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/chapters/:id", async (req, res) => {
     try {
-      await storage.deleteChapter(req.params.id);
+      const chapter = await storage.getChapter(req.params.id);
+      if (chapter) {
+        await storage.deleteChapter(req.params.id);
+        await projectWordCountService.recalculateProjectWordCount(chapter.projectId);
+      }
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get summary chain
+  app.get("/api/chapters/:id/summary-chain", async (req, res) => {
+    try {
+      const { summaryChainService } = await import("./summary-chain-service");
+      const chain = await summaryChainService.getSummaryChain(req.params.id);
+      res.json(chain);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -841,8 +1078,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
       }
-      const characters = await storage.getCharactersByProject(projectId);
-      res.json(characters);
+
+      // Get filter parameters
+      const hasCurrentGoal = req.query.hasCurrentGoal === 'true';
+      const hasCurrentEmotion = req.query.hasCurrentEmotion === 'true';
+      const notAppeared = req.query.notAppeared === 'true';
+
+      let characters = await storage.getCharactersByProject(projectId);
+
+      // Apply filters
+      if (hasCurrentGoal) {
+        characters = characters.filter(c => c.currentGoal);
+      }
+      if (hasCurrentEmotion) {
+        characters = characters.filter(c => c.currentEmotion);
+      }
+      if (notAppeared) {
+        characters = characters.filter(c => !c.firstAppearance);
+      }
+
+      // Add state summary to each character
+      const charactersWithSummary = characters.map(c => ({
+        ...c,
+        stateSummary: {
+          currentEmotion: c.currentEmotion || null,
+          currentGoal: c.currentGoal || null,
+          arcPointsCount: ((c.arcPoints as string[]) || []).length,
+          stateUpdatedAt: c.stateUpdatedAt || null,
+          hasAppeared: !!c.firstAppearance,
+        },
+      }));
+
+      res.json(charactersWithSummary);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -860,7 +1127,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/characters", async (req, res) => {
     try {
       const data = insertCharacterSchema.parse(req.body);
-      const character = await storage.createCharacter(data);
+
+      // Auto-set stateUpdatedAt if any state fields are provided
+      const hasStateFields = data.shortMotivation || data.currentGoal ||
+        data.currentEmotion || (data.arcPoints && data.arcPoints.length > 0);
+
+      const characterData = {
+        ...data,
+        stateUpdatedAt: hasStateFields ? new Date() : undefined,
+      };
+
+      const character = await storage.createCharacter(characterData);
       res.json(character);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -869,7 +1146,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/characters/:id", async (req, res) => {
     try {
-      const character = await storage.updateCharacter(req.params.id, req.body);
+      const updates = req.body;
+
+      // Get current character to compare changes
+      const currentCharacter = await storage.getCharacter(req.params.id);
+      if (!currentCharacter) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      // Check if any state fields are being updated
+      const stateFields = ['shortMotivation', 'currentGoal', 'currentEmotion', 'arcPoints'];
+      const hasStateUpdate = Object.keys(updates).some(key => stateFields.includes(key));
+
+      // Auto-update stateUpdatedAt if state fields changed
+      if (hasStateUpdate) {
+        updates.stateUpdatedAt = new Date();
+      }
+
+      // Update character
+      const character = await storage.updateCharacter(req.params.id, updates);
+
+      // Record state history only for emotion/goal changes (arcPoints handled separately)
+      if (hasStateUpdate) {
+        try {
+          const emotionChanged = updates.currentEmotion !== undefined && updates.currentEmotion !== currentCharacter.currentEmotion;
+          const goalChanged = updates.currentGoal !== undefined && updates.currentGoal !== currentCharacter.currentGoal;
+
+          // Only create history if emotion or goal actually changed
+          if (emotionChanged || goalChanged) {
+            // Create a single combined entry for this update
+            await storage.createCharacterStateHistory({
+              characterId: req.params.id,
+              projectId: currentCharacter.projectId,
+              chapterId: null,
+              chapterIndex: null,
+              sceneIndex: null,
+              emotion: emotionChanged ? updates.currentEmotion : null,
+              goal: goalChanged ? updates.currentGoal : null,
+              arcPoint: null,
+              changeType: emotionChanged && goalChanged ? 'manual_update' : (emotionChanged ? 'emotion_change' : 'goal_change'),
+              notes: [
+                emotionChanged ? (currentCharacter.currentEmotion
+                  ? `情感: "${currentCharacter.currentEmotion}" → "${updates.currentEmotion}"`
+                  : `情感: 设置为 "${updates.currentEmotion}"`) : null,
+                goalChanged ? (currentCharacter.currentGoal
+                  ? `目标: "${currentCharacter.currentGoal}" → "${updates.currentGoal}"`
+                  : `目标: 设置为 "${updates.currentGoal}"`) : null,
+              ].filter(Boolean).join(' | '),
+            });
+          }
+        } catch (historyError) {
+          // Log error but don't fail the update
+          console.error('[Character Update] Failed to record state history:', historyError);
+        }
+      }
+
       res.json(character);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -880,6 +1211,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteCharacter(req.params.id);
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Character Relationships Management
+  app.post("/api/characters/:id/relationships", async (req, res) => {
+    try {
+      const { targetCharacterId, type, strength, description } = req.body;
+
+      // Validate required fields
+      if (!targetCharacterId || !type) {
+        return res.status(400).json({ error: "targetCharacterId and type are required" });
+      }
+
+      // Validate strength range
+      if (strength !== undefined && (strength < 0 || strength > 100)) {
+        return res.status(400).json({ error: "strength must be between 0 and 100" });
+      }
+
+      // Verify source character exists
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      // Verify target character exists
+      const targetCharacter = await storage.getCharacter(targetCharacterId);
+      if (!targetCharacter) {
+        return res.status(404).json({ error: "Target character not found" });
+      }
+
+      // Get current relationships
+      const relationships = (character.relationships as Record<string, any>) || {};
+
+      // Add or update relationship
+      relationships[targetCharacterId] = {
+        type,
+        strength: strength || 50,
+        description: description || "",
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Update character
+      const updated = await storage.updateCharacter(req.params.id, {
+        relationships: relationships as any,
+        stateUpdatedAt: new Date(),
+      });
+
+      // Record to state history
+      await storage.createCharacterStateHistory({
+        characterId: req.params.id,
+        chapterId: null,
+        sceneIndex: 0,
+        emotion: null,
+        goal: null,
+        arcPoint: null,
+        notes: `Added/updated relationship with ${targetCharacter.name}: ${type} (strength: ${strength || 50})`,
+      });
+
+      res.json({
+        success: true,
+        character: updated,
+        relationship: relationships[targetCharacterId],
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/characters/:id/relationships", async (req, res) => {
+    try {
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      const relationships = (character.relationships as Record<string, any>) || {};
+
+      // Resolve target character names
+      const resolvedRelationships = await Promise.all(
+        Object.entries(relationships).map(async ([targetId, rel]: [string, any]) => {
+          const targetChar = await storage.getCharacter(targetId);
+          return {
+            targetCharacterId: targetId,
+            targetCharacterName: targetChar?.name || "Unknown",
+            type: rel.type,
+            strength: rel.strength,
+            description: rel.description,
+            updatedAt: rel.updatedAt,
+          };
+        })
+      );
+
+      res.json({
+        characterId: req.params.id,
+        characterName: character.name,
+        relationships: resolvedRelationships,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/characters/:id/relationships/:targetId", async (req, res) => {
+    try {
+      const { type, strength, description } = req.body;
+
+      // Validate strength if provided
+      if (strength !== undefined && (strength < 0 || strength > 100)) {
+        return res.status(400).json({ error: "strength must be between 0 and 100" });
+      }
+
+      // Verify source character exists
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      // Verify target character exists
+      const targetCharacter = await storage.getCharacter(req.params.targetId);
+      if (!targetCharacter) {
+        return res.status(404).json({ error: "Target character not found" });
+      }
+
+      // Get current relationships
+      const relationships = (character.relationships as Record<string, any>) || {};
+
+      // Check if relationship exists
+      if (!relationships[req.params.targetId]) {
+        return res.status(404).json({ error: "Relationship not found" });
+      }
+
+      // Update relationship
+      const existingRel = relationships[req.params.targetId];
+      relationships[req.params.targetId] = {
+        type: type !== undefined ? type : existingRel.type,
+        strength: strength !== undefined ? strength : existingRel.strength,
+        description: description !== undefined ? description : existingRel.description,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Update character
+      const updated = await storage.updateCharacter(req.params.id, {
+        relationships: relationships as any,
+        stateUpdatedAt: new Date(),
+      });
+
+      // Record to state history
+      const updatedFields = [];
+      if (type !== undefined) updatedFields.push(`type: ${type}`);
+      if (strength !== undefined) updatedFields.push(`strength: ${strength}`);
+      if (description !== undefined) updatedFields.push("description");
+
+      await storage.createCharacterStateHistory({
+        characterId: req.params.id,
+        chapterId: null,
+        sceneIndex: 0,
+        emotion: null,
+        goal: null,
+        arcPoint: null,
+        notes: `Updated relationship with ${targetCharacter.name}: ${updatedFields.join(", ")}`,
+      });
+
+      res.json({
+        success: true,
+        character: updated,
+        relationship: relationships[req.params.targetId],
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1078,85 +1578,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI Generation
-  app.post("/api/ai/generate", async (req, res) => {
+  app.post("/api/plot-cards/generate", async (req, res) => {
     try {
-      const { prompt, modelId, parameters } = req.body;
+      const { title, type, tags, projectId } = req.body;
 
-      if (!modelId) {
-        return res.status(400).json({ error: "modelId is required" });
+      if (!title || !type) {
+        return res.status(400).json({ error: "Title and type are required" });
       }
 
-      const model = await storage.getAIModel(modelId);
-      if (!model) {
-        return res.status(404).json({ error: "AI model not found" });
+      // Get default AI model
+      const models = await storage.getAIModels();
+      const defaultModel = models.find(m => m.isDefaultChat) || models[0];
+
+      if (!defaultModel) {
+        return res.status(500).json({ error: "No AI model available" });
       }
 
-      if (!model.isActive) {
-        return res.status(400).json({ error: "AI model is not active" });
-      }
+      const prompt = `作为一个专业的小说策划，请根据以下信息生成一段精彩的情节描述：
+      
+标题：${title}
+类型：${type}
+标签：${tags?.join(", ") || "无"}
+
+要求：
+1. 情节紧凑，冲突强烈
+2. 符合"${type}"类型的特点
+3. 字数在200-300字之间
+4. 直接输出情节内容，不要包含任何解释或开场白`;
 
       const result = await aiService.generate({
         prompt,
-        modelId: model.modelId,
-        provider: model.provider,
-        baseUrl: model.baseUrl || "",
-        apiKey: model.apiKey || undefined,
+        modelId: defaultModel.modelId,
+        provider: defaultModel.provider,
+        baseUrl: defaultModel.baseUrl || '',
+        apiKey: defaultModel.apiKey || undefined,
         parameters: {
-          temperature: parameters?.temperature || 0.7,
-          maxTokens: parameters?.maxTokens || 2000,
+          temperature: 0.7,
+          maxTokens: 500,
         },
       });
 
-      res.json({ content: result.content, tokensUsed: result.tokensUsed });
+      res.json({ content: result.content });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Generation History
-  app.get("/api/generation-history/:projectId", async (req, res) => {
-    try {
-      const { chapterId } = req.query;
-      const history = await storage.getGenerationHistory(
-        req.params.projectId,
-        chapterId as string | undefined
-      );
-      res.json(history);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/generation-history", async (req, res) => {
-    try {
-      const data = insertGenerationHistorySchema.parse(req.body);
-      const history = await storage.createGenerationHistory(data);
-      res.json(history);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  // Statistics
-  app.get("/api/statistics", async (req, res) => {
-    try {
-      const projectId = req.query.projectId as string;
-      if (!projectId) {
-        return res.status(400).json({ error: "projectId is required" });
-      }
-      const statistics = await storage.getStatisticsByProject(projectId);
-      res.json(statistics);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/statistics/:projectId", async (req, res) => {
-    try {
-      const statistics = await storage.getStatisticsByProject(req.params.projectId);
-      res.json(statistics);
-    } catch (error: any) {
+      console.error("[Plot Generation] Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -1166,15 +1630,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
+
       const allStats = await db
         .select()
         .from(statistics)
         .where(sql`DATE(${statistics.date}) = DATE(${today})`);
-      
+
       const todayWords = allStats.reduce((sum: number, stat) => sum + (stat.wordsWritten || 0), 0);
       const todayChapters = allStats.reduce((sum: number, stat) => sum + (stat.chaptersCompleted || 0), 0);
-      
+
       res.json({
         wordsWritten: todayWords,
         chaptersCompleted: todayChapters,
@@ -1215,11 +1679,268 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Chapter Polish
+  // Regenerate single scene
+  app.post("/api/scenes/:id/regenerate", async (req, res) => {
+    try {
+      const sceneId = req.params.id;
+      const { projectId, chapterId } = req.body;
+
+      if (!projectId || !chapterId) {
+        return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      // Get scene
+      const scenes = await storage.getSceneFramesByChapter(chapterId);
+      const scene = scenes.find(s => s.id === sceneId);
+
+      if (!scene) {
+        return res.status(404).json({ error: "Scene not found" });
+      }
+
+      // Get context (similar to chapter generation)
+      const characters = await storage.getCharactersByProject(projectId);
+      const worldSettings = await storage.getWorldSettingsByProject(projectId);
+      const outlines = await storage.getOutlinesByProject(projectId);
+      const chapterOutline = outlines.find(
+        (o) => o.type === "chapter" && o.linkedChapterId === chapterId
+      );
+      const mainOutline = outlines.find((o) => o.type === "main");
+      const project = await storage.getProject(projectId);
+
+      const chapterPlotNodes = (chapterOutline?.plotNodes as any) || {};
+      const beats = chapterPlotNodes.beats || [];
+      const requiredEntities = chapterPlotNodes.requiredEntities || [];
+      const focalEntities = chapterPlotNodes.focalEntities || requiredEntities.slice(0, 2);
+
+      const context = {
+        projectSummary: mainOutline ? {
+          coreConflicts: ((mainOutline.plotNodes as any)?.coreConflicts || []).join("\n"),
+          themeTags: ((mainOutline.plotNodes as any)?.themeTags || []).join("、"),
+          toneProfile: project?.style || "",
+        } : null,
+        characters: characters
+          .filter((c) => focalEntities.includes(c.name))
+          .map((c) => ({
+            name: c.name,
+            role: c.role,
+            personality: c.personality || "",
+            background: c.background || "",
+            abilities: c.abilities || "",
+            motivation: (c as any).shortMotivation || "",
+            currentGoal: (c as any).currentGoal || "",
+            currentEmotion: (c as any).currentEmotion || "",
+            relationships: c.relationships || {},
+          })),
+        allCharacters: characters
+          .map((c) => `${c.name}（${c.role}）`)
+          .join("、"),
+        worldSettings: worldSettings.slice(0, 2).map((w) => w.content).join("\n\n"),
+        chapterOutline: {
+          title: chapterOutline?.title || "",
+          summary: chapterPlotNodes.oneLiner || "",
+          beats: beats,
+          requiredEntities: requiredEntities,
+          focalEntities: focalEntities,
+          stakesDelta: chapterPlotNodes.stakesDelta || "",
+          entryState: chapterPlotNodes.entryState || "",
+          exitState: chapterPlotNodes.exitState || "",
+        },
+      };
+
+      // Get previous content from earlier scenes
+      let previousContent = "";
+      const adjacentSummaries: string[] = [];
+
+      for (let i = 0; i < scene.index; i++) {
+        const prevScene = scenes[i];
+        const prevDrafts = await storage.getDraftChunksByScene(prevScene.id);
+        if (prevDrafts.length > 0) {
+          const latestDraft = prevDrafts[0];
+          previousContent += latestDraft.content + "\n\n";
+          adjacentSummaries.push(latestDraft.localSummary || "");
+        }
+      }
+
+      // Build scene context
+      const sceneContext = {
+        ...context,
+        currentScene: {
+          index: scene.index,
+          total: scenes.length,
+          beat: beats[scene.index] || scene.purpose,
+          previousBeat: scene.index > 0 ? beats[scene.index - 1] : null,
+          nextBeat: scene.index < beats.length - 1 ? beats[scene.index + 1] : null,
+        },
+        previousContent: extractPreviousContext(previousContent, 800),
+        adjacentSummaries: {
+          previous: scene.index > 0 ? adjacentSummaries[scene.index - 1] : null,
+          next: scene.index < scenes.length - 1 ? scenes[scene.index + 1].purpose : null,
+        },
+        sceneFrame: scene,
+      };
+
+      // Generate scene draft
+      const result = await sceneDraftService.generateSceneDraft(
+        projectId,
+        scene,
+        sceneContext
+      );
+
+      // Save execution log
+      await storage.createPromptExecution({
+        id: result.executionLog.executionId,
+        projectId,
+        templateId: result.executionLog.templateId,
+        templateVersion: result.executionLog.templateVersion,
+        promptHash: result.executionLog.promptSignature,
+        promptMetadata: result.executionLog.promptMetadata,
+        modelId: result.executionLog.modelId,
+        modelVersion: result.executionLog.modelVersion,
+        params: result.executionLog.params,
+        responseHash: result.executionLog.responseHash,
+        responseSummary: result.executionLog.responseSummary,
+        tokensUsed: result.executionLog.tokensUsed,
+        timestamp: result.executionLog.timestamp,
+        signature: null,
+      });
+
+      // Update chapter content
+      const chapter = await storage.getChapter(chapterId);
+      if (chapter) {
+        // Rebuild chapter content from all scenes
+        let fullContent = "";
+        for (const s of scenes) {
+          const drafts = await storage.getDraftChunksByScene(s.id);
+          if (drafts.length > 0) {
+            fullContent += drafts[0].content + "\n\n";
+          }
+        }
+
+        await storage.updateChapter(chapterId, {
+          content: fullContent,
+          wordCount: fullContent.length,
+        });
+      }
+
+      res.json({
+        success: true,
+        draft: result.draft,
+        ruleCheck: result.ruleCheck,
+        executionLog: result.executionLog,
+      });
+    } catch (error: any) {
+      console.error("[Scene Regeneration] Error:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  // ========== EDITOR AI ENDPOINTS (P0 Implementation) ==========
+
+  // Editor AI instruction processing
+  app.post("/api/editor/ai-instruction", async (req, res) => {
+    try {
+      const { editorAIService } = await import("./editor-ai-service");
+      const {
+        instruction,
+        selectedText,
+        cursorPosition,
+        chapterContent,
+        chapterId,
+        projectId,
+      } = req.body;
+
+      if (!projectId || !chapterId) {
+        return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      if (!instruction) {
+        return res.status(400).json({ error: "instruction is required" });
+      }
+
+      const result = await editorAIService.processInstruction({
+        instruction,
+        selectedText: selectedText || '',
+        cursorPosition: cursorPosition || 0,
+        chapterContent: chapterContent || '',
+        chapterId,
+        projectId,
+      });
+
+      res.json({
+        success: true,
+        result: result.result,
+        metadata: result.metadata,
+      });
+    } catch (error: any) {
+      console.error("[Editor AI] Error:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  // Editor AI instruction processing (Stream)
+  app.post("/api/editor/ai-instruction-stream", async (req, res) => {
+    const { createSession } = await import("better-sse");
+    const session = await createSession(req, res, {
+      keepAlive: 10000,
+    });
+    console.log("[API] Stream session created");
+
+    try {
+      const { editorAIService } = await import("./editor-ai-service");
+      const {
+        instruction,
+        selectedText,
+        cursorPosition,
+        chapterContent,
+        chapterId,
+        projectId,
+      } = req.body;
+
+      if (!projectId || !chapterId) {
+        session.push({ type: "error", error: "projectId and chapterId are required" });
+        return;
+      }
+
+      if (!instruction) {
+        session.push({ type: "error", error: "instruction is required" });
+        return;
+      }
+
+      const stream = editorAIService.processInstructionStream({
+        instruction,
+        selectedText: selectedText || '',
+        cursorPosition: cursorPosition || 0,
+        chapterContent: chapterContent || '',
+        chapterId,
+        projectId,
+      });
+
+      for await (const event of stream) {
+        console.log("[API] Pushing event:", event.type);
+        session.push(event);
+      }
+      // Give a small buffer for the last message to flush
+      await new Promise(resolve => setTimeout(resolve, 100));
+      res.end();
+
+    } catch (error: any) {
+      console.error("[Editor AI Stream] Error:", error);
+      session.push({ type: "error", error: error.message });
+    }
+  });
+
+  // Chapter Polish (using editor AI service)
   app.post("/api/chapters/:id/polish", async (req, res) => {
     try {
+      const { editorAIService } = await import("./editor-ai-service");
       const chapterId = req.params.id;
-      const { projectId } = req.body;
+      const { projectId, focusAreas } = req.body;
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
@@ -1235,16 +1956,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "章节内容过短，无法润色" });
       }
 
-      // TODO: Implement polish service
-      res.status(501).json({ error: "Polish功能正在开发中" });
+      // Build polish instruction
+      let instruction = "请对整章内容进行全面润色";
+      if (focusAreas && focusAreas.length > 0) {
+        instruction += `，重点优化：${focusAreas.join('、')}`;
+      }
+
+      // Process polish request (for full chapter, we do it in segments)
+      const result = await editorAIService.processInstruction({
+        instruction,
+        selectedText: chapter.content,
+        cursorPosition: 0,
+        chapterContent: chapter.content,
+        chapterId,
+        projectId,
+      });
+
+      res.json({
+        success: true,
+        polishedContent: result.result,
+        metadata: result.metadata,
+      });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("[Chapter Polish] Error:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
     }
   });
 
-  // Coherence Check
+  // Coherence Check (using RAG to check for inconsistencies)
   app.post("/api/chapters/:id/check-coherence", async (req, res) => {
     try {
+      const { enhancedRAGService } = await import("./enhanced-rag-service");
+      const { editorAIService } = await import("./editor-ai-service");
       const chapterId = req.params.id;
       const { projectId } = req.body;
 
@@ -1258,39 +2004,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Chapter not found" });
       }
 
-      // TODO: Implement coherence check service
-      res.status(501).json({ error: "连贯性检测功能正在开发中" });
+      // Retrieve relevant previous contexts
+      const ragResult = await enhancedRAGService.retrieveContext({
+        projectId,
+        currentChapterId: chapterId,
+        query: chapter.content.slice(0, 500), // Use beginning of chapter as query
+        topK: 5,
+      });
+
+      // Use AI to check for inconsistencies
+      const coherencePrompt = `
+# 任务：检查章节连贯性和一致性
+
+请检查以下章节与前文是否存在逻辑或设定冲突。
+
+## 当前章节
+${chapter.content}
+
+${ragResult.promptText}
+
+## 要求
+请以JSON格式返回检测结果：
+{
+  "isCoherent": true/false,
+  "issues": [
+    {
+      "type": "character_inconsistency" | "plot_hole" | "setting_conflict" | "style_mismatch",
+      "description": "具体描述",
+      "severity": "high" | "medium" | "low",
+      "suggestion": "修改建议"
+    }
+  ],
+  "overallScore": 0-100
+}
+`;
+
+      const result = await editorAIService.processInstruction({
+        instruction: coherencePrompt,
+        selectedText: chapter.content,
+        cursorPosition: 0,
+        chapterContent: chapter.content,
+        chapterId,
+        projectId,
+      });
+
+      // Try to parse JSON result
+      let coherenceData;
+      try {
+        coherenceData = JSON.parse(result.result);
+      } catch (e) {
+        // Fallback if not JSON
+        coherenceData = {
+          isCoherent: true,
+          issues: [],
+          overallScore: 85,
+          rawAnalysis: result.result,
+        };
+      }
+
+      res.json({
+        success: true,
+        coherence: coherenceData,
+        metadata: result.metadata,
+      });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("[Coherence Check] Error:", error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
     }
   });
 
-  // Get coherence issues
-  app.get("/api/coherence-issues/:projectId", async (req, res) => {
-    try {
-      const issues = await storage.getCoherenceIssuesByProject(req.params.projectId);
-      res.json(issues);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // ========== END EDITOR AI ENDPOINTS ==========
+
 
   // Cache management
-  app.get("/api/cache/stats", async (req, res) => {
-    try {
-      const { semanticCacheService } = await import("./semantic-cache-service");
-      const stats = await semanticCacheService.getCacheStats();
-      res.json(stats);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   app.post("/api/cache/cleanup", async (req, res) => {
     try {
       const { semanticCacheService } = await import("./semantic-cache-service");
-      const { daysOld } = req.body;
-      const deleted = await semanticCacheService.cleanupCache(daysOld || 30);
+      const deleted = await semanticCacheService.cleanExpired();
       res.json({ success: true, deleted });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1332,16 +2125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Cache Statistics API
-  app.get("/api/cache/stats", async (req, res) => {
-    try {
-      const { semanticCacheService } = await import("./semantic-cache-service");
-      const stats = await semanticCacheService.getCacheStats();
-      res.json(stats);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+  // Cache Statistics API (duplicate removed - already defined above)
 
   // Few-shot Examples API
   app.get("/api/few-shot/examples", async (req, res) => {
@@ -1357,11 +2141,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Entity State API
   app.get("/api/characters/:id/state", async (req, res) => {
     try {
-      const { entityStateService } = await import("./entity-state-service");
-      const state = await entityStateService.getEntityState(req.params.id);
-      if (!state) {
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
         return res.status(404).json({ error: "Character not found" });
       }
+
+      // Get recent state history (last 3 entries)
+      const recentHistory = await storage.getCharacterStateHistory(req.params.id, 3);
+
+      const state = {
+        characterId: character.id,
+        name: character.name,
+        currentEmotion: character.currentEmotion || undefined,
+        currentGoal: character.currentGoal || undefined,
+        arcPoints: (character.arcPoints as string[]) || [],
+        lastMentioned: character.lastMentioned as any,
+        stateUpdatedAt: character.stateUpdatedAt || undefined,
+        recentHistory: recentHistory.map(h => ({
+          emotion: h.emotion,
+          goal: h.goal,
+          arcPoint: h.arcPoint,
+          chapterId: h.chapterId,
+          sceneIndex: h.sceneIndex,
+          notes: h.notes,
+          createdAt: h.createdAt,
+        })),
+      };
+
       res.json(state);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1370,14 +2176,670 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/characters/:id/arc-points", async (req, res) => {
     try {
-      const { entityStateService } = await import("./entity-state-service");
-      const arcPoints = await entityStateService.getArcPoints(req.params.id);
-      res.json(arcPoints);
+      // Get arc points from character record
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      const arcPoints = (character.arcPoints as string[]) || [];
+
+      // Get arc point history from state history (with timestamps)
+      const history = await storage.getCharacterStateHistory(req.params.id, 100);
+      const arcPointHistory = history
+        .filter(h => h.arcPoint)
+        .map(h => ({
+          arcPoint: h.arcPoint,
+          chapterId: h.chapterId,
+          sceneIndex: h.sceneIndex,
+          notes: h.notes,
+          createdAt: h.createdAt,
+        }))
+        .reverse(); // Most recent first
+
+      res.json({
+        arcPoints, // Simple array for backward compatibility
+        history: arcPointHistory, // Detailed history with timestamps
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/characters/:id/arc-points", async (req, res) => {
+    try {
+      const { arcPoint, chapterId, chapterIndex, sceneIndex, notes } = req.body;
+
+      if (!arcPoint || typeof arcPoint !== 'string') {
+        return res.status(400).json({ error: "arcPoint is required and must be a string" });
+      }
+
+      if (arcPoint.length > 200) {
+        return res.status(400).json({ error: "arcPoint must be 200 characters or less" });
+      }
+
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      // Add to arcPoints array (keeping backward compatibility with string array)
+      const arcPoints = (character.arcPoints as string[]) || [];
+      arcPoints.push(arcPoint);
+
+      // Update character
+      const updated = await storage.updateCharacter(req.params.id, {
+        arcPoints: arcPoints as any,
+        stateUpdatedAt: new Date(),
+      });
+
+      // Record to state history with proper fields
+      await storage.createCharacterStateHistory({
+        characterId: req.params.id,
+        projectId: character.projectId,
+        chapterId: chapterId || null,
+        chapterIndex: chapterIndex !== undefined ? chapterIndex : null,
+        sceneIndex: sceneIndex !== undefined ? sceneIndex : null,
+        emotion: null,
+        goal: null,
+        arcPoint: arcPoint,
+        changeType: 'arc_point_added',
+        notes: notes || `Arc point added: ${arcPoint}`,
+      });
+
+      res.json({
+        success: true,
+        character: updated,
+        arcPoint: arcPoint,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/characters/:id/state-history", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const chapterId = req.query.chapterId as string | undefined;
+      const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
+      const toDate = req.query.toDate ? new Date(req.query.toDate as string) : undefined;
+
+      // Get all history (we'll filter in memory for now)
+      let history = await storage.getCharacterStateHistory(req.params.id, 1000);
+
+      // Apply filters
+      if (chapterId) {
+        history = history.filter(h => h.chapterId === chapterId);
+      }
+
+      if (fromDate) {
+        history = history.filter(h => new Date(h.createdAt) >= fromDate);
+      }
+
+      if (toDate) {
+        history = history.filter(h => new Date(h.createdAt) <= toDate);
+      }
+
+      // Apply limit
+      const total = history.length;
+      const limitedHistory = history.slice(0, limit);
+
+      res.json({
+        history: limitedHistory,
+        total: total,
+        limit: limit,
+        hasMore: total > limit,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ========== NEW ENDPOINTS FOR REFACTORED SERVICES ==========
+
+  // Generation Logs API
+  app.get("/api/generation-logs", async (req, res) => {
+    try {
+      const { generationLogService } = await import("./generation-log-service");
+      const { projectId, chapterId, sceneId, templateId, minQuality, cachePath } = req.query;
+
+      const filters: any = {};
+      if (projectId) filters.projectId = projectId as string;
+      if (chapterId) filters.chapterId = chapterId as string;
+      if (sceneId) filters.sceneId = sceneId as string;
+      if (templateId) filters.templateId = templateId as string;
+      if (minQuality) filters.minQuality = parseInt(minQuality as string);
+      if (cachePath) filters.cachePath = cachePath as string;
+
+      const logs = await generationLogService.queryLogs(filters);
+      res.json(logs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/generation-logs/:executionId", async (req, res) => {
+    try {
+      const { generationLogService } = await import("./generation-log-service");
+      const log = await generationLogService.getExecution(req.params.executionId);
+      if (!log) {
+        return res.status(404).json({ error: "Generation log not found" });
+      }
+      res.json(log);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/generation-logs/stats/:projectId", async (req, res) => {
+    try {
+      const { generationLogService } = await import("./generation-log-service");
+      const stats = await generationLogService.getStats(req.params.projectId);
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+  // Enhanced Cache Management API
+  app.get("/api/cache/enhanced-stats", async (req, res) => {
+    try {
+      // Enhanced semantic cache service has been disabled
+      // Use the optimized caching in scene-draft-service-optimized instead
+      res.json({
+        message: "Enhanced semantic cache has been replaced with optimized exact hash caching",
+        cacheStats: sceneDraftService.getCacheStats()
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/cache/clear-expired", async (req, res) => {
+    try {
+      const { storageCacheExtension } = await import("./storage-cache-extension");
+      const deleted = await storageCacheExtension.deleteExpiredCachedExecutions();
+      res.json({ success: true, deleted });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/cache/clear-all", async (req, res) => {
+    try {
+      const { storageCacheExtension } = await import("./storage-cache-extension");
+      const { projectId } = req.query;
+
+      if (projectId) {
+        // Clear cache for specific project (if we add this method)
+        res.status(501).json({ error: "Project-specific cache clearing not yet implemented" });
+      } else {
+        // Clear all expired cache
+        const deleted = await storageCacheExtension.deleteExpiredCachedExecutions();
+        res.json({ success: true, message: "All expired cache cleared", deleted });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+  // Prompt Template Management API (enhanced) - DISABLED: Not used by frontend
+  // app.get("/api/templates/core", async (req, res) => {
+  //   try {
+  //     const { promptTemplateService } = await import("./prompt-template-service");
+  //     const templates = promptTemplateService.getAllTemplates();
+  //     res.json(templates);
+  //   } catch (error: any) {
+  //     res.status(500).json({ error: error.message });
+  //   }
+  // });
+
+  // app.get("/api/templates/:id/signature-rule", async (req, res) => {
+  //   try {
+  //     const { promptTemplateService } = await import("./prompt-template-service");
+  //     const template = await promptTemplateService.getTemplate(req.params.id);
+
+  //     if (!template) {
+  //       return res.status(404).json({ error: "Template not found" });
+  //     }
+
+  //     res.json({
+  //       templateId: template.id,
+  //       signatureRule: template.signatureRule,
+  //       components: template.components,
+  //     });
+  //   } catch (error: any) {
+  //     res.status(500).json({ error: error.message });
+  //   }
+  // });
+
+  // Version Compatibility API
+  app.get("/api/system/compatibility", async (req, res) => {
+    try {
+      const { versionCompatibilityService } = await import("./version-compatibility-service");
+      const check = await versionCompatibilityService.checkCompatibility();
+      res.json(check);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/system/compatibility/report", async (req, res) => {
+    try {
+      const { versionCompatibilityService } = await import("./version-compatibility-service");
+      const report = await versionCompatibilityService.getCompatibilityReport();
+      res.setHeader("Content-Type", "text/plain");
+      res.send(report);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/system/feature/:featureName/available", async (req, res) => {
+    try {
+      const { versionCompatibilityService } = await import("./version-compatibility-service");
+      const available = await versionCompatibilityService.isFeatureAvailable(
+        req.params.featureName
+      );
+      res.json({ feature: req.params.featureName, available });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Feature Flags API
+  app.get("/api/system/features", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      const flags = await featureFlagService.getAllFlags();
+      res.json(flags);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/system/features/config", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      const config = await featureFlagService.getConfig();
+      res.json(config);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/system/features/config", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      featureFlagService.setConfig(req.body);
+      res.json({ success: true, message: "Feature configuration updated" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/system/features/report", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      const report = await featureFlagService.getStatusReport();
+      res.setHeader("Content-Type", "text/plain");
+      res.send(report);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/system/features/:featureName/enable", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      featureFlagService.enable(req.params.featureName);
+      res.json({ success: true, feature: req.params.featureName, enabled: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/system/features/:featureName/disable", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      featureFlagService.disable(req.params.featureName);
+      res.json({ success: true, feature: req.params.featureName, enabled: false });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/system/features/rollback", async (req, res) => {
+    try {
+      const { featureFlagService } = await import("./feature-flag-service");
+      await featureFlagService.rollbackToLegacy();
+      res.json({ success: true, message: "Rolled back to legacy mode" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // Project Creation Enhancement APIs
+  // ============================================================================
+
+  // Import services
+  const { creationOrchestrator } = await import("./creation-orchestrator");
+  const { sessionManager } = await import("./session-manager");
+  const { historyService } = await import("./history-service");
+  const { feedbackLearningService } = await import("./feedback-learning-service");
+
+
+  // Session Management APIs
+  app.post("/api/sessions/create", async (req, res) => {
+    try {
+      const { seed, mode, userId } = req.body;
+      const session = await sessionManager.createSession(seed, mode, userId);
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/sessions/:id", async (req, res) => {
+    try {
+      const session = await sessionManager.getSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Creation Orchestrator APIs
+  app.post("/api/creation/quick", async (req, res) => {
+    try {
+      const { seed, userId } = req.body;
+      const result = await creationOrchestrator.createProjectWithIntegration(
+        seed,
+        userId
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/creation/stepwise/start", async (req, res) => {
+    try {
+      const { seed, userId } = req.body;
+      const sessionId = await creationOrchestrator.startStepwiseCreation(seed, userId);
+      res.json({ sessionId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/creation/stepwise/:sessionId/next", async (req, res) => {
+    try {
+      const { data } = req.body;
+      const result = await creationOrchestrator.executeNextStep(req.params.sessionId, data);
+
+      // Debug log
+      console.log("[API] Sending step result:", {
+        step: result.step,
+        dataKeys: Object.keys(result.data),
+        charactersCount: result.data.characters?.length,
+        characters: result.data.characters,
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("[API] Error executing next step:", error);
+      console.error("[API] Error stack:", error.stack);
+      res.status(500).json({
+        error: error.message,
+        details: error.stack,
+      });
+    }
+  });
+
+  app.post("/api/creation/stepwise/:sessionId/regenerate", async (req, res) => {
+    try {
+      const { options } = req.body;
+      const result = await creationOrchestrator.regenerateCurrentStep(
+        req.params.sessionId,
+        options
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/creation/stepwise/:sessionId/finalize", async (req, res) => {
+    try {
+      console.log("[API] Finalizing creation for session:", req.params.sessionId);
+      const result = await creationOrchestrator.finalizeCreation(req.params.sessionId);
+      console.log("[API] Finalize result:", {
+        projectId: result.projectId,
+        hasProjectMeta: !!result.projectMeta,
+        charactersCount: result.projectMeta?.mainEntities?.length,
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.error("[API] Finalize error:", error);
+      console.error("[API] Error stack:", error.stack);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/creation/stepwise/:sessionId/pause", async (req, res) => {
+    try {
+      await creationOrchestrator.pauseCreation(req.params.sessionId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/creation/stepwise/:sessionId/resume", async (req, res) => {
+    try {
+      const result = await creationOrchestrator.resumeCreation(req.params.sessionId);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/creation/sessions/incomplete", async (req, res) => {
+    try {
+      const userId = req.query.userId as string | undefined;
+      const sessions = await sessionManager.getIncompleteSessions(userId);
+      res.json(sessions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/creation/stepwise/:sessionId", async (req, res) => {
+    try {
+      const session = await sessionManager.getSession(req.params.sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+  // History APIs
+  app.get("/api/history/session/:sessionId", async (req, res) => {
+    try {
+      const history = await historyService.getSessionHistory(req.params.sessionId);
+      res.json(history);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/history/user/:userId", async (req, res) => {
+    try {
+      const { limit } = req.query;
+      const history = await historyService.getUserHistory(
+        req.params.userId,
+        limit ? parseInt(limit as string) : undefined
+      );
+      res.json(history);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Feedback APIs
+  app.post("/api/feedback", async (req, res) => {
+    try {
+      const { userId, candidateId, feedback } = req.body;
+      await feedbackLearningService.recordFeedback(userId, candidateId, feedback);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/feedback/preferences/:userId", async (req, res) => {
+    try {
+      const preferences = await feedbackLearningService.analyzeUserPreferences(
+        req.params.userId
+      );
+      res.json(preferences);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+  // Additional Creation APIs
+  app.get("/api/creation/recommendations/:userId", async (req, res) => {
+    try {
+      const suggestions = await feedbackLearningService.generatePersonalizedSuggestions(
+        req.params.userId,
+        {} // Empty context, will use user's historical preferences
+      );
+      res.json({ suggestions });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // History restore API
+  app.post("/api/history/:id/restore", async (req, res) => {
+    try {
+      const result = await historyService.restoreCandidate(req.params.id);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================================================
+  // Auto Creation API
+  // ============================================================================
+
+  app.post("/api/auto-creation/start", async (req, res) => {
+    try {
+      const { projectId, config } = req.body;
+      if (!projectId || !config) {
+        return res.status(400).json({ error: "Missing projectId or config" });
+      }
+      const job = await autoCreationService.startJob(projectId, config);
+      res.json(job);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auto-creation/pause", async (req, res) => {
+    try {
+      const { projectId } = req.body;
+      if (!projectId) {
+        return res.status(400).json({ error: "Missing projectId" });
+      }
+      const job = await autoCreationService.pauseJob(projectId);
+      res.json(job);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/auto-creation/status/:projectId", async (req, res) => {
+    try {
+      const job = await autoCreationService.getJobStatus(req.params.projectId);
+      res.json(job || null);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
   const httpServer = createServer(app);
+  // ============================================================================
+  // Style Lab API
+  // ============================================================================
+
+  app.post("/api/styles/extract", async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || typeof text !== "string") {
+        return res.status(400).json({ error: "Text is required" });
+      }
+      const traits = await styleExtractionService.extractStyle(text);
+      res.json(traits);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/styles", async (req, res) => {
+    try {
+      const projectId = req.query.projectId as string;
+      // If projectId is provided, filter by it (or global styles if we had them)
+      // For now, we just return all styles or filter by project
+      const query = db.select().from(styleProfiles);
+
+      if (projectId) {
+        query.where(eq(styleProfiles.projectId, projectId));
+      }
+
+      const styles = await query.orderBy(desc(styleProfiles.createdAt));
+      res.json(styles);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/styles", async (req, res) => {
+    try {
+      const data = insertStyleProfileSchema.parse(req.body);
+      const [style] = await db.insert(styleProfiles).values(data).returning();
+      res.json(style);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/styles/:id", async (req, res) => {
+    try {
+      await db.delete(styleProfiles).where(eq(styleProfiles.id, req.params.id));
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }

@@ -9,6 +9,9 @@ import {
   BarChart3,
   FileText,
   Sparkles,
+  TrendingUp,
+  Database,
+  Layout,
 } from "lucide-react";
 import {
   Sidebar,
@@ -38,7 +41,10 @@ const settingsItems = [
 const toolsItems = [
   { title: "AI模型配置", url: "/ai-models", icon: Sparkles, testId: "link-ai-models" },
   { title: "提示词模板", url: "/templates", icon: FileText, testId: "link-templates" },
+
   { title: "数据统计", url: "/statistics", icon: BarChart3, testId: "link-statistics" },
+
+  { title: "生成日志", url: "/generation-logs", icon: Database, testId: "link-generation-logs" },
   { title: "系统设置", url: "/settings", icon: Settings, testId: "link-settings" },
 ];
 

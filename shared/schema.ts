@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, vector } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -40,6 +40,8 @@ export const chapters = pgTable("chapters", {
   status: text("status").notNull().default("draft"), // draft, writing, polishing, completed, published
   notes: text("notes"),
   hook: text("hook"), // 章节钩子设计
+  contentVector: vector("content_vector", { dimensions: 1536 }), // 章节内容向量
+  version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -111,6 +113,13 @@ export const draftChunks = pgTable("draft_chunks", {
   ruleCheckPassed: boolean("rule_check_passed"),
   ruleCheckErrors: jsonb("rule_check_errors"),
   ruleCheckWarnings: jsonb("rule_check_warnings"),
+  // Enhanced metadata fields
+  promptTemplateId: varchar("prompt_template_id"),
+  templateVersion: text("template_version"),
+  modelUsed: text("model_used"),
+  tokensUsed: integer("tokens_used"),
+  cost: integer("cost"), // in cents
+  qualityScore: integer("quality_score"), // 0-100
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -175,6 +184,11 @@ export const aiModels = pgTable("ai_models", {
   isActive: boolean("is_active").default(true),
   isDefaultChat: boolean("is_default_chat").default(false), // 默认对话模型
   isDefaultEmbedding: boolean("is_default_embedding").default(false), // 默认向量模型
+  // Enhanced fields for data-driven routing and configuration
+  capabilities: jsonb("capabilities").default(sql`'[]'`), // e.g., ["creative_writing", "complex_reasoning"]
+  timeout: integer("timeout"), // Model-specific timeout in milliseconds
+  pricing: jsonb("pricing"), // {inputCostPer1M, outputCostPer1M, currency, effectiveDate}
+  configVersion: integer("config_version").default(1), // Configuration version tracking
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -248,6 +262,219 @@ export const promptExecutions = pgTable("prompt_executions", {
   signature: text("signature"), // Optional cryptographic signature for legal evidence
 });
 
+// Generation Logs table - comprehensive generation tracking
+export const generationLogs = pgTable("generation_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  executionId: varchar("execution_id").notNull().unique(),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
+  sceneId: varchar("scene_id").references(() => sceneFrames.id, { onDelete: "cascade" }),
+  templateId: varchar("template_id").notNull(),
+  templateVersion: text("template_version").notNull(),
+  promptSignature: text("prompt_signature").notNull(),
+  promptMetadata: jsonb("prompt_metadata").notNull(),
+  modelId: text("model_id").notNull(),
+  modelVersion: text("model_version").notNull(),
+  params: jsonb("params").notNull(),
+  routeDecision: jsonb("route_decision").notNull(),
+  cachePath: text("cache_path"), // exact, semantic, template
+  responseHash: text("response_hash").notNull(),
+  responseSummary: text("response_summary"),
+  tokensUsed: integer("tokens_used").notNull(),
+  cost: integer("cost"), // in cents
+  qualityScore: jsonb("quality_score"),
+  ruleViolations: jsonb("rule_violations"),
+  repairActions: jsonb("repair_actions"),
+  // Enhanced fields for retry tracking and error details
+  retryCount: integer("retry_count").default(0),
+  totalDuration: integer("total_duration"), // in milliseconds
+  errorType: varchar("error_type", { length: 50 }), // network, api, parse, validation, timeout, unknown
+  rawResponse: text("raw_response"), // Store raw AI response for debugging
+  parseErrors: jsonb("parse_errors"), // {type, message, position, suggestions}
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+// Cached Executions table - three-tier semantic cache
+export const cachedExecutions = pgTable("cached_executions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  executionId: varchar("execution_id").notNull(),
+  templateId: varchar("template_id").notNull(),
+  semanticSignature: text("semantic_signature").notNull(), // JSON array of embedding vector
+  semanticHash: text("semantic_hash").notNull(),
+  promptHash: text("prompt_hash").notNull(),
+  result: jsonb("result").notNull(),
+  metadata: jsonb("metadata").notNull(),
+  hitCount: integer("hit_count").default(0),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Character State History table - track character state changes
+export const characterStateHistory = pgTable("character_state_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  characterId: varchar("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "set null" }),
+  chapterIndex: integer("chapter_index"),
+  sceneIndex: integer("scene_index"),
+  emotion: text("emotion"),
+  goal: text("goal"),
+  arcPoint: text("arc_point"),
+  notes: text("notes"),
+  changeType: text("change_type").notNull(), // 'emotion_change', 'goal_change', 'arc_point_added', 'manual_update'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Prompt Template Versions table - versioned prompt templates
+export const promptTemplateVersions = pgTable("prompt_template_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  templateId: text("template_id").notNull(),
+  version: text("version").notNull(),
+  templateText: text("template_text").notNull(),
+  components: jsonb("components").notNull(),
+  exampleInputs: jsonb("example_inputs"),
+  expectedOutputs: jsonb("expected_outputs"),
+  signatureRule: text("signature_rule").notNull(),
+  performanceMetrics: jsonb("performance_metrics"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Generation Jobs table - async chapter generation queue
+export const generationJobs = pgTable("generation_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id, { onDelete: "cascade" }),
+  userId: varchar("user_id"), // For future multi-user support
+  status: text("status").notNull().default("queued"), // queued, processing, completed, failed, cancelled
+  progress: integer("progress").notNull().default(0), // 0-100
+  currentScene: integer("current_scene").default(0),
+  totalScenes: integer("total_scenes").default(0),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  estimatedTimeRemaining: integer("estimated_time_remaining"), // in seconds
+});
+
+// Notifications table - user notifications for async operations
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(), // For future multi-user support
+  type: text("type").notNull(), // generation_started, scene_completed, generation_completed, generation_failed, progress_update
+  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
+  jobId: varchar("job_id").references(() => generationJobs.id, { onDelete: "cascade" }),
+  data: jsonb("data"), // Notification payload
+  priority: text("priority").notNull().default("medium"), // high, medium, low
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Summaries table - hierarchical summaries for long-term memory
+export const summaries = pgTable("summaries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  targetId: varchar("target_id").notNull(), // chapterId, volumeId, or projectId
+  targetType: text("target_type").notNull(), // chapter, volume, project
+  level: integer("level").notNull().default(0), // 0=chapter, 1=volume, 2=project
+  content: text("content").notNull(),
+  version: integer("version").notNull().default(1),
+  isStale: boolean("is_stale").default(false),
+  contentVector: vector("content_vector", { dimensions: 1536 }), // 摘要内容向量
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Change Sets table - version control for chapters
+export const changeSets = pgTable("change_sets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id, { onDelete: "cascade" }),
+  baseVersion: integer("base_version").notNull(),
+  targetVersion: integer("target_version").notNull(),
+  operations: jsonb("operations").notNull(), // JSON Patch operations
+  author: varchar("author"),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ============================================================================
+// Project Creation Enhancement Tables
+// ============================================================================
+
+// Sessions table - stores project creation session state
+export const sessions = pgTable("sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"), // For future multi-user support
+  mode: text("mode").notNull(), // 'quick' | 'stepwise'
+  seed: jsonb("seed").notNull(), // ProjectSeed data
+  currentStep: text("current_step").notNull(), // 'basic' | 'characters' | 'world' | 'outline' | 'finalize'
+  stepResults: jsonb("step_results").notNull().default(sql`'{}'`), // Map<CreationStep, StepResult>
+  status: text("status").notNull().default("active"), // 'active' | 'paused' | 'completed' | 'expired'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(), // Auto-expire after 7 days
+});
+
+// Session Steps table - stores individual step results
+export const sessionSteps = pgTable("session_steps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  step: text("step").notNull(), // 'basic' | 'characters' | 'world' | 'outline' | 'finalize'
+  data: jsonb("data").notNull(), // Step-specific data
+  candidates: jsonb("candidates"), // Array of ProjectMeta candidates
+  selectedCandidate: jsonb("selected_candidate"), // Selected ProjectMeta
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+
+
+// Creation History table - stores all candidate generations
+export const creationHistory = pgTable("creation_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  candidate: jsonb("candidate").notNull(), // ProjectMeta
+  qualityScore: jsonb("quality_score").notNull(), // QualityScore
+  innovationScore: jsonb("innovation_score").notNull(), // InnovationScore
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+  metadata: jsonb("metadata").notNull(), // { modelUsed, tokensUsed, generationTime }
+});
+
+// Auto Creation Jobs table - track automated writing sessions
+export const autoCreationJobs = pgTable("auto_creation_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("active"), // active, paused, completed, error
+  config: jsonb("config").notNull(), // { batchSize, qualityThreshold, etc. }
+  currentChapterId: varchar("current_chapter_id"),
+  stats: jsonb("stats").default(sql`'{"chaptersGenerated": 0, "errors": 0}'`),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// User Feedback table - stores user feedback on generated content
+export const userFeedback = pgTable("user_feedback", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  candidateId: varchar("candidate_id").notNull(), // Reference to creation_history.id
+  rating: integer("rating").notNull(), // 1-5
+  tags: text("tags").array().notNull().default(sql`ARRAY[]::text[]`), // ['excellent', 'good', 'poor', etc.]
+  comments: text("comments"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// User Preferences table - stores analyzed user preferences
+export const userPreferences = pgTable("user_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  favoriteGenres: text("favorite_genres").array().notNull().default(sql`ARRAY[]::text[]`),
+  favoriteStyles: text("favorite_styles").array().notNull().default(sql`ARRAY[]::text[]`),
+  characterPreferences: jsonb("character_preferences").notNull().default(sql`'{}'`),
+  worldPreferences: jsonb("world_preferences").notNull().default(sql`'{}'`),
+  innovationTolerance: integer("innovation_tolerance").notNull().default(50), // 0-100
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Relations
 export const projectsRelations = relations(projects, ({ many }) => ({
   volumes: many(volumes),
@@ -260,6 +487,7 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   generationHistory: many(generationHistory),
   statistics: many(statistics),
   promptExecutions: many(promptExecutions),
+  generationLogs: many(generationLogs),
 }));
 
 export const volumesRelations = relations(volumes, ({ one, many }) => ({
@@ -298,11 +526,12 @@ export const outlinesRelations = relations(outlines, ({ one, many }) => ({
   }),
 }));
 
-export const charactersRelations = relations(characters, ({ one }) => ({
+export const charactersRelations = relations(characters, ({ one, many }) => ({
   project: one(projects, {
     fields: [characters.projectId],
     references: [projects.id],
   }),
+  stateHistory: many(characterStateHistory),
 }));
 
 export const sceneFramesRelations = relations(sceneFrames, ({ one, many }) => ({
@@ -395,6 +624,83 @@ export const promptExecutionsRelations = relations(promptExecutions, ({ one }) =
   }),
 }));
 
+export const generationLogsRelations = relations(generationLogs, ({ one }) => ({
+  project: one(projects, {
+    fields: [generationLogs.projectId],
+    references: [projects.id],
+  }),
+  chapter: one(chapters, {
+    fields: [generationLogs.chapterId],
+    references: [chapters.id],
+  }),
+  scene: one(sceneFrames, {
+    fields: [generationLogs.sceneId],
+    references: [sceneFrames.id],
+  }),
+}));
+
+export const characterStateHistoryRelations = relations(characterStateHistory, ({ one }) => ({
+  character: one(characters, {
+    fields: [characterStateHistory.characterId],
+    references: [characters.id],
+  }),
+  project: one(projects, {
+    fields: [characterStateHistory.projectId],
+    references: [projects.id],
+  }),
+  chapter: one(chapters, {
+    fields: [characterStateHistory.chapterId],
+    references: [chapters.id],
+  }),
+}));
+
+export const generationJobsRelations = relations(generationJobs, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [generationJobs.projectId],
+    references: [projects.id],
+  }),
+  chapter: one(chapters, {
+    fields: [generationJobs.chapterId],
+    references: [chapters.id],
+  }),
+  notifications: many(notifications),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  chapter: one(chapters, {
+    fields: [notifications.chapterId],
+    references: [chapters.id],
+  }),
+  job: one(generationJobs, {
+    fields: [notifications.jobId],
+    references: [generationJobs.id],
+  }),
+}));
+
+export const summariesRelations = relations(summaries, ({ one }) => ({
+  project: one(projects, {
+    fields: [summaries.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const changeSetsRelations = relations(changeSets, ({ one }) => ({
+  chapter: one(chapters, {
+    fields: [changeSets.chapterId],
+    references: [chapters.id],
+  }),
+}));
+
+// System Configuration table - environment-specific configuration
+export const systemConfig = pgTable("system_config", {
+  key: varchar("key", { length: 255 }).primaryKey(),
+  value: jsonb("value").notNull(),
+  environment: varchar("environment", { length: 50 }).notNull().default("production"),
+  description: text("description"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  updatedBy: varchar("updated_by", { length: 255 }),
+});
+
 // Insert schemas
 export const insertProjectSchema = createInsertSchema(projects).omit({
   id: true,
@@ -418,20 +724,50 @@ export const insertOutlineSchema = createInsertSchema(outlines).omit({
   createdAt: true,
 });
 
-export const insertCharacterSchema = createInsertSchema(characters).omit({
-  id: true,
-  createdAt: true,
-});
+export const insertCharacterSchema = createInsertSchema(characters)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    // Enhanced validation for new state tracking fields
+    shortMotivation: z.string().max(200).nullable().optional(),
+    currentGoal: z.string().max(200).nullable().optional(),
+    currentEmotion: z.string().max(50).nullable().optional(),
+    arcPoints: z.array(
+      z.union([
+        z.string(),
+        z.object({
+          content: z.string(),
+          timestamp: z.string().or(z.date()).optional(),
+          chapterIndex: z.number().optional()
+        })
+      ])
+    ).nullable().optional(),
+  });
 
 export const insertWorldSettingSchema = createInsertSchema(worldSettings).omit({
   id: true,
   createdAt: true,
 });
 
-export const insertAIModelSchema = createInsertSchema(aiModels).omit({
-  id: true,
-  createdAt: true,
-});
+export const insertAIModelSchema = createInsertSchema(aiModels)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    // Enhanced validation for new fields
+    capabilities: z.array(z.string()).nullable().optional(),
+    timeout: z.number().int().positive().nullable().optional(),
+    pricing: z.object({
+      inputCostPer1M: z.number().nonnegative(),
+      outputCostPer1M: z.number().nonnegative(),
+      currency: z.string(),
+      effectiveDate: z.string().datetime(),
+    }).nullable().optional(),
+    configVersion: z.number().int().positive().optional(),
+  });
 
 export const insertPromptTemplateSchema = createInsertSchema(promptTemplates).omit({
   id: true,
@@ -479,51 +815,39 @@ export const insertDocDeltaSchema = createInsertSchema(docDeltas).omit({
   createdAt: true,
 });
 
-// Character State History table
-export const characterStateHistory = pgTable("character_state_history", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  characterId: varchar("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
-  chapterId: varchar("chapter_id").references(() => chapters.id, { onDelete: "cascade" }),
-  sceneIndex: integer("scene_index"),
-  emotion: text("emotion"),
-  goal: text("goal"),
-  arcPoint: text("arc_point"), // 如果在此场景达成弧光点
-  notes: text("notes"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const insertGenerationLogSchema = createInsertSchema(generationLogs)
+  .omit({
+    id: true,
+    timestamp: true,
+  })
+  .extend({
+    // Enhanced validation for new fields
+    retryCount: z.number().int().nonnegative().optional(),
+    totalDuration: z.number().int().positive().nullable().optional(),
+    errorType: z.enum(['network', 'api', 'parse', 'validation', 'timeout', 'unknown']).nullable().optional(),
+    rawResponse: z.string().nullable().optional(),
+    parseErrors: z.object({
+      type: z.enum(['syntax', 'validation', 'extraction']),
+      message: z.string(),
+      position: z.number().int().nonnegative().optional(),
+      rawContent: z.string(),
+      suggestions: z.array(z.string()),
+    }).nullable().optional(),
+  });
 
-// Semantic Signatures table - for caching mechanism
-export const semanticSignatures = pgTable("semantic_signatures", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  templateId: text("template_id").notNull(),
-  keyInfo: text("key_info").notNull(),
-  signatureHash: text("signature_hash").notNull(),
-  embeddingModel: text("embedding_model"),
-  draftChunkId: varchar("draft_chunk_id").references(() => draftChunks.id, { onDelete: "cascade" }),
-  tokensUsed: integer("tokens_used"),
-  qualityScore: integer("quality_score"), // 0-100
-  reuseCount: integer("reuse_count").default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  lastUsedAt: timestamp("last_used_at"),
-});
-
-// Prompt Template Versions table
-export const promptTemplateVersions = pgTable("prompt_template_versions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  templateId: text("template_id").notNull(),
-  version: text("version").notNull(),
-  modules: jsonb("modules").notNull(),
-  performanceMetrics: jsonb("performance_metrics"),
-  isActive: boolean("is_active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const insertCharacterStateHistorySchema = createInsertSchema(characterStateHistory).omit({
+export const insertCachedExecutionSchema = createInsertSchema(cachedExecutions).omit({
   id: true,
   createdAt: true,
 });
 
-export const insertSemanticSignatureSchema = createInsertSchema(semanticSignatures).omit({
+export const insertAutoCreationJobSchema = createInsertSchema(autoCreationJobs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+
+export const insertCharacterStateHistorySchema = createInsertSchema(characterStateHistory).omit({
   id: true,
   createdAt: true,
 });
@@ -531,6 +855,56 @@ export const insertSemanticSignatureSchema = createInsertSchema(semanticSignatur
 export const insertPromptTemplateVersionSchema = createInsertSchema(promptTemplateVersions).omit({
   id: true,
   createdAt: true,
+});
+
+export const insertGenerationJobSchema = createInsertSchema(generationJobs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSummarySchema = createInsertSchema(summaries).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChangeSetSchema = createInsertSchema(changeSets).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Project Creation Enhancement Insert Schemas
+export const insertSessionSchema = createInsertSchema(sessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSessionStepSchema = createInsertSchema(sessionSteps).omit({
+  id: true,
+  timestamp: true,
+});
+
+
+
+export const insertCreationHistorySchema = createInsertSchema(creationHistory).omit({
+  id: true,
+  timestamp: true,
+});
+
+export const insertUserFeedbackSchema = createInsertSchema(userFeedback).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertUserPreferencesSchema = createInsertSchema(userPreferences).omit({
+  id: true,
+  updatedAt: true,
 });
 
 // Infer types
@@ -588,8 +962,52 @@ export type DocDelta = typeof docDeltas.$inferSelect;
 export type InsertCharacterStateHistory = z.infer<typeof insertCharacterStateHistorySchema>;
 export type CharacterStateHistory = typeof characterStateHistory.$inferSelect;
 
-export type InsertSemanticSignature = z.infer<typeof insertSemanticSignatureSchema>;
-export type SemanticSignature = typeof semanticSignatures.$inferSelect;
-
 export type InsertPromptTemplateVersion = z.infer<typeof insertPromptTemplateVersionSchema>;
 export type PromptTemplateVersion = typeof promptTemplateVersions.$inferSelect;
+
+export type InsertGenerationLog = z.infer<typeof insertGenerationLogSchema>;
+export type GenerationLog = typeof generationLogs.$inferSelect;
+
+export type InsertCachedExecution = z.infer<typeof insertCachedExecutionSchema>;
+export type CachedExecution = typeof cachedExecutions.$inferSelect;
+
+export type InsertGenerationJob = z.infer<typeof insertGenerationJobSchema>;
+export type GenerationJob = typeof generationJobs.$inferSelect;
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;
+
+export type InsertSummary = z.infer<typeof insertSummarySchema>;
+export type Summary = typeof summaries.$inferSelect;
+export type InsertUserFeedback = z.infer<typeof insertUserFeedbackSchema>;
+export type UserFeedback = typeof userFeedback.$inferSelect;
+
+export type InsertChangeSet = z.infer<typeof insertChangeSetSchema>;
+export type ChangeSet = typeof changeSets.$inferSelect;
+
+export type InsertUserPreferences = z.infer<typeof insertUserPreferencesSchema>;
+export type UserPreferences = typeof userPreferences.$inferSelect;
+
+export const insertSystemConfigSchema = createInsertSchema(systemConfig);
+export type InsertSystemConfig = z.infer<typeof insertSystemConfigSchema>;
+export type SystemConfig = typeof systemConfig.$inferSelect;
+
+export type Session = typeof sessions.$inferSelect;
+export type SessionStep = typeof sessionSteps.$inferSelect;
+
+export type InsertAutoCreationJob = z.infer<typeof insertAutoCreationJobSchema>;
+export type AutoCreationJob = typeof autoCreationJobs.$inferSelect;
+// Style Profiles table - stores extracted writing styles
+export const styleProfiles = pgTable("style_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id, { onDelete: "cascade" }), // Optional, can be global or project-specific
+  name: text("name").notNull(),
+  description: text("description"),
+  traits: jsonb("traits").notNull(), // { rhythm, vocabulary, sentenceStructure, rhetoricalDevices, tone }
+  sampleTextSnippet: text("sample_text_snippet"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertStyleProfileSchema = createInsertSchema(styleProfiles);
+export type InsertStyleProfile = z.infer<typeof insertStyleProfileSchema>;
+export type StyleProfile = typeof styleProfiles.$inferSelect;

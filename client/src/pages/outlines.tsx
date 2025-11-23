@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { 
-  Plus, 
-  FileText, 
-  ChevronRight, 
-  ChevronDown, 
-  Trash2, 
-  BookOpen, 
-  Layers, 
+import {
+  Plus,
+  FileText,
+  ChevronRight,
+  ChevronDown,
+  Trash2,
+  BookOpen,
+  Layers,
   FileEdit,
   Sparkles
 } from "lucide-react";
@@ -26,6 +26,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { generateChapterTitle } from "@/lib/number-utils";
 import { GenerateVolumesDialog } from "@/components/outlines/generate-volumes-dialog";
 import { GenerateChaptersDialog } from "@/components/outlines/generate-chapters-dialog";
+import { AppendVolumesDialog } from "@/components/outlines/append-volumes-dialog";
+import { AppendChaptersDialog } from "@/components/outlines/append-chapters-dialog";
 import type { Project, Outline, Volume, Chapter } from "@shared/schema";
 
 const outlineTypes = {
@@ -74,7 +76,11 @@ export default function Outlines() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outlines", selectedProjectId] });
+      // Invalidate all outline queries to ensure consistency across all components
+      queryClient.invalidateQueries({
+        queryKey: ["/api/outlines"],
+        refetchType: "all"
+      });
     },
   });
 
@@ -83,7 +89,14 @@ export default function Outlines() {
       return await apiRequest("DELETE", `/api/outlines/${id}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/outlines", selectedProjectId] });
+      // Invalidate all outline queries for this project (including those with chapter IDs)
+      queryClient.invalidateQueries({
+        queryKey: ["/api/outlines"],
+        refetchType: "all"
+      });
+      // Also invalidate chapters and volumes as they may reference outlines
+      queryClient.invalidateQueries({ queryKey: ["/api/chapters", selectedProjectId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/volumes", selectedProjectId] });
     },
   });
 
@@ -91,13 +104,13 @@ export default function Outlines() {
     mutationFn: async (volumeId: string) => {
       const volumeChapters = chapters?.filter(c => c.volumeId === volumeId) || [];
       const chapterNumber = volumeChapters.length + 1;
-      
+
       // Calculate orderIndex: max orderIndex in volume + 1
       let maxOrderIndex = 0;
       if (volumeChapters.length > 0) {
         maxOrderIndex = Math.max(...volumeChapters.map(c => c.orderIndex));
       }
-      
+
       return await apiRequest("POST", "/api/chapters", {
         projectId: selectedProjectId,
         volumeId,
@@ -125,10 +138,10 @@ export default function Outlines() {
 
   // 获取总纲
   const mainOutline = outlines?.find((o) => o.type === "main");
-  
+
   // 获取卷纲（按orderIndex排序）
   const volumeOutlines = outlines?.filter((o) => o.type === "volume").sort((a, b) => a.orderIndex - b.orderIndex) || [];
-  
+
   // 获取章纲（按orderIndex排序）
   const chapterOutlines = outlines?.filter((o) => o.type === "chapter").sort((a, b) => a.orderIndex - b.orderIndex) || [];
 
@@ -136,6 +149,7 @@ export default function Outlines() {
   const renderMainOutline = () => {
     if (!mainOutline) return null;
     const isExpanded = expandedNodes.has(mainOutline.id);
+    const plotNodes = mainOutline.plotNodes as any;
 
     return (
       <div className="space-y-2">
@@ -152,9 +166,19 @@ export default function Outlines() {
           </button>
           <BookOpen className="h-4 w-4 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-semibold text-sm">{mainOutline.title}</span>
               <Badge variant="default" className="text-xs">总纲</Badge>
+              {plotNodes?.estimatedChapters && (
+                <Badge variant="outline" className="text-xs">
+                  预计 {plotNodes.estimatedChapters} 章
+                </Badge>
+              )}
+              {plotNodes?.themeTags?.length > 0 && plotNodes.themeTags.slice(0, 2).map((tag: string) => (
+                <Badge key={tag} variant="secondary" className="text-xs">
+                  {tag}
+                </Badge>
+              ))}
             </div>
           </div>
           <Button
@@ -169,12 +193,124 @@ export default function Outlines() {
             <Trash2 className="h-3 w-3" />
           </Button>
         </div>
-        
-        {isExpanded && mainOutline.content && (
-          <div className="ml-6 pl-4 border-l-2 border-primary/20">
-            <div className="text-sm text-muted-foreground whitespace-pre-wrap p-3 bg-muted/30 rounded-md">
-              {mainOutline.content}
-            </div>
+
+        {isExpanded && (
+          <div className="ml-6 pl-4 border-l-2 border-primary/20 space-y-3">
+            {/* Plot Nodes Structure */}
+            {plotNodes && (
+              <div className="space-y-3">
+                {/* Theme Tags */}
+                {plotNodes.themeTags?.length > 0 && (
+                  <div className="p-3 bg-muted/30 rounded-md">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                      <span className="text-xs font-semibold">主题标签</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {plotNodes.themeTags.map((tag: string) => (
+                        <Badge key={tag} variant="outline" className="text-xs">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tone Profile */}
+                {plotNodes.toneProfile && (
+                  <div className="p-3 bg-muted/30 rounded-md">
+                    <span className="text-xs font-semibold text-muted-foreground">基调：</span>
+                    <p className="text-xs mt-1">{plotNodes.toneProfile}</p>
+                  </div>
+                )}
+
+                {/* Core Conflicts */}
+                {plotNodes.coreConflicts?.length > 0 && (
+                  <div className="p-3 bg-muted/30 rounded-md">
+                    <span className="text-xs font-semibold text-muted-foreground">核心冲突</span>
+                    <ul className="mt-1 space-y-1 list-disc list-inside">
+                      {plotNodes.coreConflicts.map((conflict: string, i: number) => (
+                        <li key={i} className="text-xs text-muted-foreground">{conflict}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Keywords */}
+                {plotNodes.keywords?.length > 0 && (
+                  <div className="p-3 bg-muted/30 rounded-md">
+                    <span className="text-xs font-semibold text-muted-foreground">关键词：</span>
+                    <span className="text-xs ml-1">{plotNodes.keywords.join('、')}</span>
+                  </div>
+                )}
+
+                {/* Story Arc: Opening, Climax, Ending */}
+                {(plotNodes.opening || plotNodes.climax || plotNodes.ending) && (
+                  <div className="space-y-2">
+                    {plotNodes.opening && (
+                      <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-md border border-green-200 dark:border-green-900">
+                        <span className="text-xs font-semibold text-green-700 dark:text-green-400">开篇</span>
+                        <p className="text-xs mt-1 text-muted-foreground">{plotNodes.opening}</p>
+                      </div>
+                    )}
+                    {plotNodes.climax && (
+                      <div className="p-3 bg-orange-50 dark:bg-orange-950/20 rounded-md border border-orange-200 dark:border-orange-900">
+                        <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">高潮</span>
+                        <p className="text-xs mt-1 text-muted-foreground">{plotNodes.climax}</p>
+                      </div>
+                    )}
+                    {plotNodes.ending && (
+                      <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md border border-blue-200 dark:border-blue-900">
+                        <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">结局</span>
+                        <p className="text-xs mt-1 text-muted-foreground">{plotNodes.ending}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Plot Points */}
+                {plotNodes.plotPoints?.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-xs font-semibold">情节点 ({plotNodes.plotPoints.length})</span>
+                    </div>
+                    {plotNodes.plotPoints.map((point: any, i: number) => (
+                      <div key={i} className="p-3 bg-background border rounded-md">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold">{i + 1}. {point.title}</span>
+                          {point.timing && (
+                            <Badge variant="outline" className="text-xs h-4">
+                              {point.timing}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{point.description}</p>
+                        {point.characters?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {point.characters.map((char: string) => (
+                              <Badge key={char} variant="secondary" className="text-xs h-4">
+                                {char}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Original Content (if any) */}
+            {mainOutline.content && (
+              <div>
+                <span className="text-xs font-semibold text-muted-foreground block mb-2">详细描述</span>
+                <div className="text-sm text-muted-foreground whitespace-pre-wrap p-3 bg-muted/30 rounded-md">
+                  {mainOutline.content}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -184,17 +320,17 @@ export default function Outlines() {
   // 渲染卷纲节点
   const renderVolumeOutline = (volumeOutline: Outline, index: number) => {
     // 优先使用linkedVolumeId，如果不存在则通过title匹配，最后fallback到outline.id
-    const volumeId = volumeOutline.linkedVolumeId || 
-                     volumes?.find((v) => v.title === volumeOutline.title)?.id ||
-                     volumeOutline.id;
-    
+    const volumeId = volumeOutline.linkedVolumeId ||
+      volumes?.find((v) => v.title === volumeOutline.title)?.id ||
+      volumeOutline.id;
+
     // 获取该卷的章节（通过volumeId或通过章节大纲的parentId）
-    const volumeChapters = volumeId 
+    const volumeChapters = volumeId
       ? chapters?.filter((c) => c.volumeId === volumeId).sort((a, b) => a.orderIndex - b.orderIndex) || []
       : [];
-    
+
     const isExpanded = expandedNodes.has(volumeOutline.id);
-    
+
     // 提取元数据
     const plotNodes = volumeOutline.plotNodes as any;
     const themeTags = plotNodes?.themeTags || [];
@@ -215,7 +351,7 @@ export default function Outlines() {
             )}
           </button>
           <Layers className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
-          <div 
+          <div
             className="flex-1 min-w-0 cursor-pointer"
             onClick={() => toggleNode(volumeOutline.id)}
           >
@@ -261,16 +397,42 @@ export default function Outlines() {
               <Plus className="h-3 w-3 mr-1" />
               新增章节
             </Button>
-            <GenerateChaptersDialog
-              projectId={selectedProjectId}
-              volumeId={volumeId || volumeOutline.id}
-              volumeTitle={volumeOutline.title}
-            >
-              <Button size="sm" variant="outline" className="text-xs h-7">
-                <Sparkles className="h-3 w-3 mr-1" />
-                AI生成
-              </Button>
-            </GenerateChaptersDialog>
+            {volumeChapters.length > 0 ? (
+              <>
+                <AppendChaptersDialog
+                  projectId={selectedProjectId}
+                  volumeId={volumeId || volumeOutline.id}
+                  volumeTitle={volumeOutline.title}
+                  currentChapterCount={volumeChapters.length}
+                >
+                  <Button size="sm" variant="outline" className="text-xs h-7">
+                    <Plus className="h-3 w-3 mr-1" />
+                    追加章节
+                  </Button>
+                </AppendChaptersDialog>
+                <GenerateChaptersDialog
+                  projectId={selectedProjectId}
+                  volumeId={volumeId || volumeOutline.id}
+                  volumeTitle={volumeOutline.title}
+                >
+                  <Button size="sm" variant="ghost" className="text-xs h-7" title="重新生成全部章节">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    重新生成
+                  </Button>
+                </GenerateChaptersDialog>
+              </>
+            ) : (
+              <GenerateChaptersDialog
+                projectId={selectedProjectId}
+                volumeId={volumeId || volumeOutline.id}
+                volumeTitle={volumeOutline.title}
+              >
+                <Button size="sm" variant="outline" className="text-xs h-7">
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  AI生成
+                </Button>
+              </GenerateChaptersDialog>
+            )}
             <Button
               size="icon"
               variant="ghost"
@@ -314,7 +476,7 @@ export default function Outlines() {
                 )}
               </div>
             )}
-            
+
             {volumeChapters.length > 0 ? (
               <div className="space-y-1">
                 {volumeChapters.map((chapter) => {
@@ -351,9 +513,9 @@ export default function Outlines() {
   // 渲染章节节点
   const renderChapterItem = (chapter: Chapter, chapterOutline?: Outline) => {
     return (
-      <ChapterItem 
-        key={chapter.id} 
-        chapter={chapter} 
+      <ChapterItem
+        key={chapter.id}
+        chapter={chapter}
         chapterOutline={chapterOutline}
         onDelete={(id) => deleteOutlineMutation.mutate(id)}
       />
@@ -370,6 +532,12 @@ export default function Outlines() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {selectedProjectId && volumeOutlines.length > 0 && (
+            <AppendVolumesDialog
+              projectId={selectedProjectId}
+              currentVolumeCount={volumeOutlines.length}
+            />
+          )}
           {selectedProjectId && (
             <GenerateVolumesDialog projectId={selectedProjectId} />
           )}
@@ -448,12 +616,12 @@ export default function Outlines() {
               <div className="space-y-3">
                 {/* 总纲 */}
                 {mainOutline && renderMainOutline()}
-                
+
                 {/* 卷纲列表 */}
                 {volumeOutlines.map((volumeOutline, index) =>
                   renderVolumeOutline(volumeOutline, index)
                 )}
-                
+
                 {/* 空状态提示 */}
                 {!mainOutline && volumeOutlines.length > 0 && (
                   <div className="p-3 bg-muted/30 rounded-lg border border-dashed">
@@ -495,17 +663,17 @@ export default function Outlines() {
 }
 
 // 章节项组件
-function ChapterItem({ 
-  chapter, 
+function ChapterItem({
+  chapter,
   chapterOutline,
-  onDelete 
-}: { 
-  chapter: Chapter; 
+  onDelete
+}: {
+  chapter: Chapter;
   chapterOutline?: Outline;
   onDelete: (id: string) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  
+
   // 提取章节元数据
   const plotNodes = chapterOutline?.plotNodes as any;
   const requiredEntities = plotNodes?.requiredEntities || [];
@@ -513,99 +681,99 @@ function ChapterItem({
   const stakesDelta = plotNodes?.stakesDelta || "";
   const beats = plotNodes?.beats || [];
 
-    return (
-      <div key={chapter.id} className="space-y-1">
-        <div className="flex items-center gap-2 p-2.5 rounded-md bg-background border hover:bg-muted/50 transition-colors group">
-          {chapterOutline && (beats.length > 0 || requiredEntities.length > 0) && (
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="shrink-0 hover:bg-muted rounded p-0.5"
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-3 w-3" />
-              ) : (
-                <ChevronRight className="h-3 w-3" />
-              )}
-            </button>
-          )}
-          <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm">{chapter.title}</span>
-              <span className="text-xs text-muted-foreground">
-                {chapter.wordCount || 0} 字
-              </span>
-              {beats.length > 0 && (
-                <Badge variant="outline" className="text-xs h-4">
-                  {beats.length} 场景
-                </Badge>
-              )}
-              {focalEntities.length > 0 && focalEntities.slice(0, 2).map((entity: string) => (
-                <Badge key={entity} variant="secondary" className="text-xs h-4">
-                  {entity}
-                </Badge>
-              ))}
-            </div>
-            {chapterOutline?.content && (
-              <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                {chapterOutline.content.split('\n')[0]}
-              </p>
+  return (
+    <div key={chapter.id} className="space-y-1">
+      <div className="flex items-center gap-2 p-2.5 rounded-md bg-background border hover:bg-muted/50 transition-colors group">
+        {chapterOutline && (beats.length > 0 || requiredEntities.length > 0) && (
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="shrink-0 hover:bg-muted rounded p-0.5"
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
             )}
-            {stakesDelta && (
-              <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
-                {stakesDelta}
-              </p>
+          </button>
+        )}
+        <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm">{chapter.title}</span>
+            <span className="text-xs text-muted-foreground">
+              {chapter.wordCount || 0} 字
+            </span>
+            {beats.length > 0 && (
+              <Badge variant="outline" className="text-xs h-4">
+                {beats.length} 场景
+              </Badge>
             )}
+            {focalEntities.length > 0 && focalEntities.slice(0, 2).map((entity: string) => (
+              <Badge key={entity} variant="secondary" className="text-xs h-4">
+                {entity}
+              </Badge>
+            ))}
           </div>
-          {chapterOutline && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(chapterOutline.id);
-              }}
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+          {chapterOutline?.content && (
+            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+              {chapterOutline.content.split('\n')[0]}
+            </p>
+          )}
+          {stakesDelta && (
+            <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
+              {stakesDelta}
+            </p>
           )}
         </div>
-        
-        {/* 展开显示章节详细信息 */}
-        {isExpanded && chapterOutline && (
-          <div className="ml-8 p-2 bg-muted/20 rounded-md text-xs space-y-1.5">
-            {beats.length > 0 && (
-              <div>
-                <span className="font-medium text-muted-foreground">场景节拍：</span>
-                <ul className="mt-0.5 space-y-0.5 list-disc list-inside">
-                  {beats.map((beat: string, i: number) => (
-                    <li key={i} className="text-muted-foreground">{beat}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {requiredEntities.length > 0 && (
-              <div>
-                <span className="font-medium text-muted-foreground">必需角色：</span>
-                <span className="ml-1 text-muted-foreground">{requiredEntities.join("、")}</span>
-              </div>
-            )}
-            {plotNodes?.entryState && (
-              <div>
-                <span className="font-medium text-muted-foreground">入场状态：</span>
-                <span className="ml-1 text-muted-foreground">{plotNodes.entryState}</span>
-              </div>
-            )}
-            {plotNodes?.exitState && (
-              <div>
-                <span className="font-medium text-muted-foreground">出场状态：</span>
-                <span className="ml-1 text-muted-foreground">{plotNodes.exitState}</span>
-              </div>
-            )}
-          </div>
+        {chapterOutline && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(chapterOutline.id);
+            }}
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
         )}
       </div>
-    );
-  }
+
+      {/* 展开显示章节详细信息 */}
+      {isExpanded && chapterOutline && (
+        <div className="ml-8 p-2 bg-muted/20 rounded-md text-xs space-y-1.5">
+          {beats.length > 0 && (
+            <div>
+              <span className="font-medium text-muted-foreground">场景节拍：</span>
+              <ul className="mt-0.5 space-y-0.5 list-disc list-inside">
+                {beats.map((beat: string, i: number) => (
+                  <li key={i} className="text-muted-foreground">{beat}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {requiredEntities.length > 0 && (
+            <div>
+              <span className="font-medium text-muted-foreground">必需角色：</span>
+              <span className="ml-1 text-muted-foreground">{requiredEntities.join("、")}</span>
+            </div>
+          )}
+          {plotNodes?.entryState && (
+            <div>
+              <span className="font-medium text-muted-foreground">入场状态：</span>
+              <span className="ml-1 text-muted-foreground">{plotNodes.entryState}</span>
+            </div>
+          )}
+          {plotNodes?.exitState && (
+            <div>
+              <span className="font-medium text-muted-foreground">出场状态：</span>
+              <span className="ml-1 text-muted-foreground">{plotNodes.exitState}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 

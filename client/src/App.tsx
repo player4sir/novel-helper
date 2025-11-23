@@ -16,7 +16,10 @@ import WorldSettings from "@/pages/world-settings";
 import PlotCards from "@/pages/plot-cards";
 import AIModels from "@/pages/ai-models";
 import PromptTemplates from "@/pages/prompt-templates";
+
 import Statistics from "@/pages/statistics";
+
+import GenerationLogs from "@/pages/generation-logs";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 
@@ -31,7 +34,10 @@ function Router() {
       <Route path="/plots" component={PlotCards} />
       <Route path="/ai-models" component={AIModels} />
       <Route path="/templates" component={PromptTemplates} />
+
       <Route path="/statistics" component={Statistics} />
+
+      <Route path="/generation-logs" component={GenerationLogs} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>

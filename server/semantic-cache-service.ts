@@ -1,338 +1,547 @@
-// Semantic Cache Service
-// 实现语义签名缓存机制
-// 遵循构建创作小说应用方案.txt的缓存策略
+// Semantic Cache Service with Verification
+// Implements semantic signature-based caching with quick verification
 
-import { storage } from "./storage";
 import { aiService } from "./ai-service";
+import { storage } from "./storage";
+import { storageCacheExtension } from "./storage-cache-extension";
 import crypto from "crypto";
 
-export interface CacheCheckResult {
-  hit: boolean;
-  draftChunk?: any;
-  signatureId?: string;
-  similarity?: number;
+interface CachedExecution {
+  executionId: string;
+  semanticSignature: number[];
+  semanticHash: string;
+  promptHash: string;
+  result: any;
+  metadata: {
+    seed: any;
+    quality: number;
+    timestamp: Date;
+    hitCount: number;
+  };
 }
 
-export interface SemanticSignatureData {
-  templateId: string;
-  keyInfo: string;
-  signatureHash: string;
-  embeddingModel?: string;
-  draftChunkId: string;
-  tokensUsed: number;
-  qualityScore: number;
+interface CacheSearchResult {
+  cached: CachedExecution;
+  similarity: number;
 }
 
 export class SemanticCacheService {
-  private readonly SIMILARITY_THRESHOLD = 0.92; // 相似度阈值（降低以提高命中率）
-  private readonly CACHE_ENABLED = true; // 缓存开关
-  private readonly USE_EMBEDDING = true; // 使用embedding进行语义匹配
+  private readonly SIMILARITY_THRESHOLD = 0.98; // 提高到 98% 避免误判
+  private readonly CACHE_TTL_DAYS = 30;
+  private readonly MIN_QUALITY_TO_CACHE = 70;
 
   /**
-   * 检查缓存
-   * 实现方案中的缓存查询逻辑
-   * 支持基于embedding的语义匹配
+   * Find semantically similar cached execution
+   */
+  async findSimilar(
+    semanticSignature: number[],
+    templateId: string
+  ): Promise<CacheSearchResult | null> {
+    try {
+      // Get all cached executions for this template
+      const cached = await storageCacheExtension.getCachedExecutions(templateId);
+
+      if (cached.length === 0) {
+        return null;
+      }
+
+      // Calculate similarities (with dimension check)
+      const similarities: CacheSearchResult[] = [];
+
+      for (const c of cached) {
+        try {
+          // Check if dimensions match
+          if (c.semanticSignature.length !== semanticSignature.length) {
+            console.warn(
+              `[Cache] Dimension mismatch: expected ${semanticSignature.length}, got ${c.semanticSignature.length}`
+            );
+            continue;
+          }
+
+          const similarity = this.cosineSimilarity(semanticSignature, c.semanticSignature);
+          similarities.push({
+            cached: c,
+            similarity,
+          });
+        } catch (err) {
+          console.warn(`[Cache] Failed to calculate similarity:`, err);
+          continue;
+        }
+      }
+
+      if (similarities.length === 0) {
+        return null;
+      }
+
+      // Find best match
+      let best = similarities[0];
+      for (const s of similarities) {
+        if (s.similarity > best.similarity) {
+          best = s;
+        }
+      }
+
+      if (best.similarity >= this.SIMILARITY_THRESHOLD) {
+        console.log(
+          `[Cache] Found similar execution (similarity: ${best.similarity.toFixed(3)})`
+        );
+        return best;
+      }
+
+      return null;
+    } catch (error) {
+      console.error("[Cache] Search failed:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Quick verification using small model (10-30 tokens)
+   */
+  async quickVerify(
+    cached: CachedExecution,
+    currentSeed: any
+  ): Promise<boolean> {
+    try {
+      // Check if cached result has the expected structure
+      if (!cached.result || typeof cached.result !== 'object') {
+        console.warn("[Cache] Invalid cached result structure, skipping verification");
+        return true; // Trust cache if structure is unexpected
+      }
+
+      // Build verification prompt based on available data
+      let prompt = "";
+
+      // For project/volume generation cache
+      if (cached.result.projectMeta) {
+        const title = cached.result.projectMeta.title || "未知";
+        const premise = cached.result.projectMeta.premise
+          ? cached.result.projectMeta.premise.substring(0, 100)
+          : "未知";
+
+        prompt = `判断以下项目设定是否适合创意种子"${currentSeed.titleSeed || "未知"}"？
+
+项目标题：${title}
+核心设定：${premise}...
+
+要求：
+1. 主题是否匹配？
+2. 风格是否一致？
+3. 是否可以直接使用？
+
+只回答：是 或 否`;
+      }
+      // For volume/chapter cache
+      else if (cached.result.volumes || cached.result.chapters) {
+        const itemType = cached.result.volumes ? "卷" : "章节";
+        const items = cached.result.volumes || cached.result.chapters;
+        const count = items?.length || 0;
+
+        prompt = `判断以下${itemType}纲是否适合当前项目？
+
+${itemType}数量：${count}个
+项目ID：${currentSeed.projectId || "未知"}
+
+要求：
+1. 结构是否合理？
+2. 是否可以直接使用？
+
+只回答：是 或 否`;
+      }
+      // Generic fallback
+      else {
+        console.log("[Cache] Unknown cache structure, trusting cache");
+        return true;
+      }
+
+      const models = await storage.getAIModels();
+      const smallModel = models.find(
+        (m) => m.modelType === "chat" && m.isActive && !m.modelId.toLowerCase().includes("large")
+      );
+
+      if (!smallModel) {
+        console.warn("[Cache] No small model available for verification");
+        return true; // 降级：无验证模型时信任缓存
+      }
+
+      const result = await aiService.generate({
+        prompt,
+        modelId: smallModel.modelId,
+        provider: smallModel.provider,
+        baseUrl: smallModel.baseUrl || "",
+        apiKey: smallModel.apiKey || undefined,
+        parameters: {
+          temperature: 0,
+          maxTokens: 10,
+        },
+      });
+
+      const answer = result.content.trim();
+      const isValid = answer.includes("是") || answer.toLowerCase().includes("yes");
+
+      console.log(`[Cache] Verification result: ${isValid ? "PASS" : "FAIL"}`);
+      return isValid;
+    } catch (error) {
+      console.error("[Cache] Verification failed:", error);
+      return true; // 降级：验证失败时信任缓存
+    }
+  }
+
+  /**
+   * Calculate semantic signature from seed
+   */
+  async calculateSignature(seed: any): Promise<{
+    signature: number[];
+    hash: string;
+  }> {
+    try {
+      // Build text representation
+      const text = this.buildTextForEmbedding(seed);
+
+      if (!text || text.trim() === "") {
+        console.warn("[Cache] Empty text for embedding, seed:", JSON.stringify(seed));
+        throw new Error("Cannot generate embedding for empty text");
+      }
+
+      // Get embedding
+      const embedding = await aiService.getEmbedding(text);
+
+      if (!embedding) {
+        throw new Error("Failed to generate embedding");
+      }
+
+      // Normalize to unit vector
+      const normalized = this.normalizeVector(embedding);
+
+      // Calculate hash
+      const hash = crypto
+        .createHash("sha256")
+        .update(JSON.stringify(normalized))
+        .digest("hex");
+
+      return {
+        signature: normalized,
+        hash,
+      };
+    } catch (error) {
+      console.error("[Cache] Signature calculation failed:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Cache execution result
+   */
+  async cacheResult(
+    executionId: string,
+    templateId: string,
+    semanticSignature: number[],
+    semanticHash: string,
+    promptHash: string,
+    result: any,
+    seed: any,
+    quality: number
+  ): Promise<void> {
+    try {
+      // Only cache high-quality results
+      if (quality < this.MIN_QUALITY_TO_CACHE) {
+        console.log(
+          `[Cache] Quality too low (${quality}), not caching`
+        );
+        return;
+      }
+
+      await storageCacheExtension.createCachedExecution({
+        executionId,
+        templateId,
+        semanticSignature,
+        semanticHash,
+        promptHash,
+        result,
+        metadata: {
+          seed,
+          quality,
+          timestamp: new Date(),
+          hitCount: 0,
+        },
+        expiresAt: new Date(Date.now() + this.CACHE_TTL_DAYS * 24 * 60 * 60 * 1000),
+      });
+
+      console.log(`[Cache] Cached execution ${executionId} (quality: ${quality})`);
+    } catch (error) {
+      console.error("[Cache] Failed to cache result:", error);
+      // Non-critical error, don't throw
+    }
+  }
+
+  /**
+   * Update cache hit count
+   */
+  async recordHit(executionId: string): Promise<void> {
+    try {
+      await storageCacheExtension.incrementCacheHitCount(executionId);
+    } catch (error) {
+      console.error("[Cache] Failed to record hit:", error);
+    }
+  }
+
+  /**
+   * Clean expired cache entries
+   */
+  async cleanExpired(): Promise<number> {
+    try {
+      const deleted = await storageCacheExtension.deleteExpiredCachedExecutions();
+      console.log(`[Cache] Cleaned ${deleted} expired entries`);
+      return deleted;
+    } catch (error) {
+      console.error("[Cache] Cleanup failed:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get cache statistics
+   */
+  async getStats(): Promise<{
+    totalEntries: number;
+    totalHits: number;
+    avgQuality: number;
+    hitRate: number;
+  }> {
+    try {
+      return await storageCacheExtension.getCacheStats();
+    } catch (error) {
+      console.error("[Cache] Failed to get stats:", error);
+      return {
+        totalEntries: 0,
+        totalHits: 0,
+        avgQuality: 0,
+        hitRate: 0,
+      };
+    }
+  }
+
+  // ============================================================================
+  // Private Helper Methods
+  // ============================================================================
+
+  private buildTextForEmbedding(seed: any): string {
+    console.log("[Cache] Building text for embedding, seed keys:", Object.keys(seed));
+    const parts: string[] = [];
+
+    // Handle scene draft generation seed structure
+    if (seed.sceneFrame) {
+      // 关键：添加章节 ID 和场景索引，确保不同场景不会被误判为相似
+      parts.push(`chapter:${seed.sceneFrame.chapterId}`);
+      parts.push(`scene:${seed.sceneFrame.index}`);
+      parts.push(`id:${seed.sceneFrame.id}`); // 场景唯一 ID
+
+      parts.push(seed.sceneFrame.purpose || "");
+      parts.push(seed.sceneFrame.entryStateSummary || "");
+      parts.push(seed.sceneFrame.exitStateSummary || "");
+      if (seed.sceneFrame.focalEntities) {
+        parts.push(seed.sceneFrame.focalEntities.join(" "));
+      }
+
+      // Add context information
+      if (seed.context) {
+        if (seed.context.projectSummary) {
+          parts.push(seed.context.projectSummary.coreConflicts || "");
+          parts.push(seed.context.projectSummary.themeTags || "");
+        }
+        if (seed.context.characters) {
+          const charNames = Array.isArray(seed.context.characters)
+            ? seed.context.characters.map((c: any) => c.name || "").join(" ")
+            : "";
+          if (charNames) parts.push(charNames);
+        }
+        // 添加上文内容的摘要，确保连续性
+        if (seed.context.previousContent) {
+          const preview = seed.context.previousContent.substring(0, 200);
+          parts.push(`previous:${preview}`);
+        }
+      }
+    }
+    // Handle project/volume generation seed structure (legacy)
+    else if (seed.titleSeed) {
+      parts.push(seed.titleSeed);
+      if (seed.premise) parts.push(seed.premise);
+      if (seed.genre) parts.push(seed.genre);
+      if (seed.style) parts.push(seed.style);
+    }
+    // Handle volume generation structure (new)
+    else if (seed.themeTags || seed.coreConflicts) {
+      if (seed.themeTags) parts.push(seed.themeTags.join(" "));
+      if (seed.coreConflicts) parts.push(seed.coreConflicts.join(" "));
+      if (seed.projectId) parts.push(seed.projectId);
+    }
+    // Handle chapter generation structure (new)
+    else if (seed.volumeBeats) {
+      if (seed.volumeBeats) parts.push(seed.volumeBeats.join(" "));
+      if (seed.volumeId) parts.push(seed.volumeId);
+      if (seed.projectId) parts.push(seed.projectId);
+    }
+    // Handle append chapters structure
+    else if (seed.contextHash && seed.volumeId) {
+      parts.push(`append_chapters:${seed.volumeId}`);
+      if (seed.contextHash) parts.push(seed.contextHash);
+      if (seed.additionalCount) parts.push(`count:${seed.additionalCount}`);
+      if (seed.startIndex) parts.push(`start:${seed.startIndex}`);
+      if (seed.projectId) parts.push(seed.projectId);
+    }
+
+    return parts.filter(p => p).join(" | ");
+  }
+
+  private normalizeVector(vector: number[]): number[] {
+    const magnitude = Math.sqrt(
+      vector.reduce((sum, val) => sum + val * val, 0)
+    );
+
+    if (magnitude === 0) return vector;
+
+    return vector.map((val) => val / magnitude);
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) {
+      throw new Error("Vectors must have same length");
+    }
+
+    let dotProduct = 0;
+    let magnitudeA = 0;
+    let magnitudeB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      magnitudeA += a[i] * a[i];
+      magnitudeB += b[i] * b[i];
+    }
+
+    magnitudeA = Math.sqrt(magnitudeA);
+    magnitudeB = Math.sqrt(magnitudeB);
+
+    if (magnitudeA === 0 || magnitudeB === 0) {
+      return 0;
+    }
+
+    return dotProduct / (magnitudeA * magnitudeB);
+  }
+
+  /**
+   * Check cache for scene draft generation (wrapper for scene-draft-service)
+   * This method provides backward compatibility with the old interface
    */
   async checkCache(
     templateId: string,
     sceneFrame: any,
     context: any
-  ): Promise<CacheCheckResult> {
-    if (!this.CACHE_ENABLED) {
-      return { hit: false };
-    }
-
+  ): Promise<{
+    hit: boolean;
+    draftChunk?: any;
+    executionId?: string;
+  }> {
     try {
-      // 1. 提取关键信息
-      const keyInfo = this.extractKeyInfo(sceneFrame, context);
+      // Create a seed from sceneFrame and context
+      const seed = {
+        sceneFrame,
+        context: {
+          previousContent: context.previousContent?.substring(0, 500),
+          characters: context.characters,
+          projectSummary: context.projectSummary,
+        },
+      };
 
-      // 2. 生成签名哈希
-      const signatureHash = this.hashContent(keyInfo);
+      // Calculate semantic signature
+      const { signature, hash } = await this.calculateSignature(seed);
 
-      // 3. 查找相似签名（精确匹配）
-      let similarSignatures = await storage.findSimilarSignatures(
-        templateId,
-        signatureHash
-      );
+      // Try to find similar cached execution
+      const similar = await this.findSimilar(signature, templateId);
 
-      // 4. 如果没有精确匹配，尝试语义匹配
-      if (similarSignatures.length === 0 && this.USE_EMBEDDING) {
-        similarSignatures = await this.findSemanticallySimilarSignatures(
-          templateId,
-          keyInfo
-        );
-      }
-
-      if (similarSignatures.length === 0) {
-        console.log("[Cache] Miss - No similar signatures found");
+      if (!similar) {
         return { hit: false };
       }
 
-      // 5. 获取最佳匹配
-      const bestMatch = similarSignatures[0];
+      // 严格验证：确保是同一个场景（通过 ID 和索引）
+      const cachedSeed = similar.cached.metadata?.seed;
+      if (cachedSeed?.sceneFrame) {
+        // 检查场景 ID 是否完全匹配
+        if (cachedSeed.sceneFrame.id !== sceneFrame.id) {
+          console.log(
+            `[Cache] Scene ID mismatch (cached: ${cachedSeed.sceneFrame.id}, current: ${sceneFrame.id}), cache miss`
+          );
+          return { hit: false };
+        }
 
-      // 6. 运行短回验
-      const isValid = await this.shortVerification(bestMatch, sceneFrame);
+        // 检查章节 ID 是否匹配
+        if (cachedSeed.sceneFrame.chapterId !== sceneFrame.chapterId) {
+          console.log(
+            `[Cache] Chapter ID mismatch, cache miss`
+          );
+          return { hit: false };
+        }
+
+        // 检查场景索引是否匹配
+        if (cachedSeed.sceneFrame.index !== sceneFrame.index) {
+          console.log(
+            `[Cache] Scene index mismatch (cached: ${cachedSeed.sceneFrame.index}, current: ${sceneFrame.index}), cache miss`
+          );
+          return { hit: false };
+        }
+      }
+
+      // Verify the cached result is still valid
+      const isValid = await this.quickVerify(similar.cached, seed);
 
       if (!isValid) {
-        console.log("[Cache] Miss - Verification failed");
+        console.log("[Cache] Verification failed, cache miss");
         return { hit: false };
       }
 
-      // 7. 获取缓存的草稿
-      const draftChunk = await storage.getDraftChunk(bestMatch.draftChunkId);
+      // Record cache hit
+      await this.recordHit(similar.cached.executionId);
 
-      if (!draftChunk) {
-        console.log("[Cache] Miss - Draft chunk not found");
+      // Validate cached result structure
+      const cachedResult = similar.cached.result;
+      if (!cachedResult || typeof cachedResult !== 'object') {
+        console.warn("[Cache] Invalid cached result structure, cache miss");
         return { hit: false };
       }
 
-      // 8. 更新使用统计
-      await storage.updateSignatureUsage(bestMatch.id);
+      // Ensure the cached result has required fields
+      if (!cachedResult.content) {
+        console.warn("[Cache] Cached result missing content field, cache miss");
+        return { hit: false };
+      }
 
-      console.log(
-        `[Cache] Hit - Reusing draft (quality: ${bestMatch.qualityScore}, reuse: ${bestMatch.reuseCount + 1})`
-      );
-
+      // Return the cached draft chunk
       return {
         hit: true,
-        draftChunk,
-        signatureId: bestMatch.id,
-        similarity: bestMatch.similarity || 1.0,
+        draftChunk: cachedResult,
+        executionId: similar.cached.executionId,
       };
-    } catch (error: any) {
-      console.error("[Cache] Check failed:", error.message);
+    } catch (error) {
+      console.error("[Cache] Check failed:", error);
       return { hit: false };
     }
   }
 
   /**
-   * 使用embedding查找语义相似的签名
-   */
-  private async findSemanticallySimilarSignatures(
-    templateId: string,
-    keyInfo: string
-  ): Promise<any[]> {
-    try {
-      // 获取keyInfo的embedding
-      const queryEmbedding = await aiService.getEmbedding(keyInfo);
-      if (!queryEmbedding) {
-        return [];
-      }
-
-      // 获取所有该模板的签名
-      const allSignatures = await storage.findSimilarSignatures(templateId, "");
-
-      // 计算相似度
-      const similarities: Array<{ signature: any; similarity: number }> = [];
-
-      for (const signature of allSignatures) {
-        // 获取签名的embedding
-        const sigEmbedding = await aiService.getEmbedding(signature.keyInfo);
-        if (!sigEmbedding) continue;
-
-        // 计算余弦相似度
-        const similarity = this.cosineSimilarity(queryEmbedding, sigEmbedding);
-
-        if (similarity >= this.SIMILARITY_THRESHOLD) {
-          similarities.push({ signature: { ...signature, similarity }, similarity });
-        }
-      }
-
-      // 按相似度排序
-      similarities.sort((a, b) => b.similarity - a.similarity);
-
-      console.log(
-        `[Cache] Found ${similarities.length} semantically similar signatures`
-      );
-
-      return similarities.map((s) => s.signature);
-    } catch (error) {
-      console.error("[Cache] Semantic search failed:", error);
-      return [];
-    }
-  }
-
-  /**
-   * 计算余弦相似度
-   */
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-
-    normA = Math.sqrt(normA);
-    normB = Math.sqrt(normB);
-
-    if (normA === 0 || normB === 0) return 0;
-
-    return dotProduct / (normA * normB);
-  }
-
-  /**
-   * 保存到缓存
-   * 只保存高质量的草稿（质量分数 >= 70）
-   */
-  async saveToCache(
-    templateId: string,
-    sceneFrame: any,
-    context: any,
-    draftChunkId: string,
-    tokensUsed: number,
-    qualityScore: number
-  ): Promise<void> {
-    if (!this.CACHE_ENABLED) {
-      return;
-    }
-
-    // 只缓存高质量内容
-    if (qualityScore < 70) {
-      console.log(`[Cache] Skip caching low quality draft (score: ${qualityScore})`);
-      return;
-    }
-
-    try {
-      // 提取关键信息
-      const keyInfo = this.extractKeyInfo(sceneFrame, context);
-
-      // 生成签名哈希
-      const signatureHash = this.hashContent(keyInfo);
-
-      // 获取embedding模型信息（如果使用）
-      let embeddingModel: string | null = null;
-      if (this.USE_EMBEDDING) {
-        try {
-          const defaultEmbedding = await aiService.getDefaultEmbeddingModel();
-          embeddingModel = defaultEmbedding?.modelId || null;
-        } catch (error) {
-          console.log("[Cache] Failed to get embedding model info");
-        }
-      }
-
-      // 保存签名
-      await storage.createSemanticSignature({
-        templateId,
-        keyInfo,
-        signatureHash,
-        embeddingModel,
-        draftChunkId,
-        tokensUsed,
-        qualityScore,
-        reuseCount: 0,
-        lastUsedAt: null,
-      });
-
-      console.log(
-        `[Cache] Saved signature for future reuse (quality: ${qualityScore})`
-      );
-    } catch (error: any) {
-      console.error("[Cache] Save failed:", error.message);
-    }
-  }
-
-  /**
-   * 提取关键信息
-   * 用于生成语义签名
-   */
-  private extractKeyInfo(sceneFrame: any, context: any): string {
-    const keyElements = [
-      `purpose:${sceneFrame.purpose}`,
-      `entry:${sceneFrame.entryStateSummary || ""}`,
-      `exit:${sceneFrame.exitStateSummary || ""}`,
-      `entities:${(sceneFrame.focalEntities || []).join(",")}`,
-    ];
-
-    // 添加上文摘要（如果有）
-    if (context.previousContent) {
-      const summary = context.previousContent.substring(0, 100);
-      keyElements.push(`prev:${summary}`);
-    }
-
-    return keyElements.join("|");
-  }
-
-  /**
-   * 短回验
-   * 使用10-30 token快速检查缓存内容是否仍然适用
-   * 可选使用AI进行快速验证
-   */
-  private async shortVerification(
-    signature: any,
-    sceneFrame: any
-  ): Promise<boolean> {
-    try {
-      const keyInfo = signature.keyInfo;
-
-      // 1. 基础规则检查
-      // 检查场景目的是否匹配
-      const purposeMatch = keyInfo.includes(sceneFrame.purpose.substring(0, 20));
-      if (!purposeMatch) {
-        console.log("[Cache] Verification failed: purpose mismatch");
-        return false;
-      }
-
-      // 检查焦点角色是否匹配
-      const entities = sceneFrame.focalEntities || [];
-      for (const entity of entities) {
-        if (!keyInfo.includes(entity)) {
-          console.log(`[Cache] Verification failed: entity ${entity} not found`);
-          return false;
-        }
-      }
-
-      // 检查质量分数
-      if (signature.qualityScore < 60) {
-        console.log(
-          `[Cache] Verification failed: low quality (${signature.qualityScore})`
-        );
-        return false;
-      }
-
-      // 检查复用次数（避免过度复用导致内容重复）
-      if (signature.reuseCount > 10) {
-        console.log(
-          `[Cache] Verification failed: overused (${signature.reuseCount} times)`
-        );
-        return false;
-      }
-
-      // 2. 可选：使用AI进行快速验证（10-30 tokens）
-      // 这里可以调用AI模型快速判断缓存内容是否适用
-      // 为了节省token，暂时只使用规则检查
-
-      return true;
-    } catch (error) {
-      console.error("[Cache] Verification error:", error);
-      return false;
-    }
-  }
-
-  /**
-   * 计算质量分数
-   * 基于规则检查结果和内容特征
+   * Calculate quality score for caching decision
    */
   calculateQualityScore(
     content: string,
-    ruleCheck: any,
+    ruleCheck: { passed: boolean; errors: string[]; warnings: string[] },
+    context: any,
     targetWords: number
   ): number {
     let score = 100;
 
-    // 规则检查扣分
-    if (!ruleCheck.passed) {
-      score -= ruleCheck.errors.length * 15;
-    }
+    // Deduct for rule violations
+    score -= ruleCheck.errors.length * 20;
     score -= ruleCheck.warnings.length * 5;
 
-    // 字数偏差扣分
+    // Deduct for word count deviation
     const wordCount = content.length;
     const deviation = Math.abs(wordCount - targetWords) / targetWords;
     if (deviation > 0.3) {
@@ -341,131 +550,64 @@ export class SemanticCacheService {
       score -= 10;
     }
 
-    // 对话比例检查
-    const dialogueCount = (content.match(/["「『]/g) || []).length;
-    const dialogueRatio = dialogueCount / (wordCount / 100);
-    if (dialogueRatio < 5 || dialogueRatio > 50) {
-      score -= 10;
-    }
-
-    // 段落结构检查
-    const paragraphs = content.split("\n\n").filter((p) => p.trim());
-    if (paragraphs.length < 3 && wordCount > 500) {
-      score -= 10;
+    // Bonus for passing all checks
+    if (ruleCheck.passed) {
+      score += 10;
     }
 
     return Math.max(0, Math.min(100, score));
   }
 
   /**
-   * 生成内容哈希
+   * Save to cache with quality filtering
    */
-  private hashContent(content: string): string {
-    return crypto.createHash("sha256").update(content).digest("hex");
-  }
-
-  /**
-   * 清理过期缓存
-   * 删除质量分数低或长时间未使用的缓存
-   */
-  async cleanupCache(daysOld: number = 30): Promise<number> {
+  async saveToCache(
+    templateId: string,
+    seed: any,
+    result: any,
+    draftChunkId: string,
+    tokensUsed: number,
+    qualityScore: number
+  ): Promise<void> {
     try {
-      let deletedCount = 0;
-
-      // 获取所有签名
-      const allSignatures = await storage.findSimilarSignatures("", "");
-
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-
-      for (const signature of allSignatures) {
-        let shouldDelete = false;
-
-        // 1. 删除质量分数 < 50 的缓存
-        if (signature.qualityScore < 50) {
-          shouldDelete = true;
-        }
-
-        // 2. 删除超过 daysOld 天未使用的缓存（且复用次数 < 3）
-        if (
-          signature.lastUsedAt &&
-          new Date(signature.lastUsedAt) < cutoffDate &&
-          signature.reuseCount < 3
-        ) {
-          shouldDelete = true;
-        }
-
-        // 3. 保留复用次数高的缓存（>= 5次）
-        if (signature.reuseCount >= 5) {
-          shouldDelete = false;
-        }
-
-        if (shouldDelete) {
-          // 这里需要添加删除方法到storage
-          // await storage.deleteSemanticSignature(signature.id);
-          deletedCount++;
-        }
+      // Only cache high-quality results
+      if (qualityScore < this.MIN_QUALITY_TO_CACHE) {
+        console.log(
+          `[Cache] Quality too low (${qualityScore}), not caching`
+        );
+        return;
       }
 
-      console.log(`[Cache] Cleanup completed, deleted ${deletedCount} signatures`);
-      return deletedCount;
-    } catch (error: any) {
-      console.error("[Cache] Cleanup failed:", error.message);
-      return 0;
-    }
-  }
+      // Calculate semantic signature
+      const { signature, hash } = await this.calculateSignature(seed);
 
-  /**
-   * 获取缓存统计
-   */
-  async getCacheStats(): Promise<{
-    totalSignatures: number;
-    avgQualityScore: number;
-    avgReuseCount: number;
-    hitRate: number;
-  }> {
-    try {
-      const allSignatures = await storage.findSimilarSignatures("", "");
+      // Generate execution ID
+      const executionId = `exec_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-      if (allSignatures.length === 0) {
-        return {
-          totalSignatures: 0,
-          avgQualityScore: 0,
-          avgReuseCount: 0,
-          hitRate: 0,
-        };
-      }
+      // Generate prompt hash
+      const promptHash = crypto
+        .createHash("sha256")
+        .update(JSON.stringify(seed))
+        .digest("hex");
 
-      const totalQuality = allSignatures.reduce(
-        (sum, sig) => sum + (sig.qualityScore || 0),
-        0
-      );
-      const totalReuse = allSignatures.reduce(
-        (sum, sig) => sum + (sig.reuseCount || 0),
-        0
+      // Cache the result
+      await this.cacheResult(
+        executionId,
+        templateId,
+        signature,
+        hash,
+        promptHash,
+        result,
+        seed,
+        qualityScore
       );
 
-      const avgQualityScore = totalQuality / allSignatures.length;
-      const avgReuseCount = totalReuse / allSignatures.length;
-
-      // 计算命中率（复用次数 > 0 的比例）
-      const usedSignatures = allSignatures.filter((sig) => sig.reuseCount > 0);
-      const hitRate = usedSignatures.length / allSignatures.length;
-
-      return {
-        totalSignatures: allSignatures.length,
-        avgQualityScore: Math.round(avgQualityScore),
-        avgReuseCount: Math.round(avgReuseCount * 10) / 10,
-        hitRate: Math.round(hitRate * 100) / 100,
-      };
+      console.log(
+        `[Cache] Saved with quality ${qualityScore} (execution: ${executionId})`
+      );
     } catch (error) {
-      console.error("[Cache] Stats failed:", error);
-      return {
-        totalSignatures: 0,
-        avgQualityScore: 0,
-        avgReuseCount: 0,
-        hitRate: 0,
-      };
+      console.error("[Cache] Save failed:", error);
+      throw error;
     }
   }
 }

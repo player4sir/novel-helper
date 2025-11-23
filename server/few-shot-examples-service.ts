@@ -13,6 +13,8 @@ export interface FewShotExample {
 }
 
 export class FewShotExamplesService {
+  // Few-Shot示例库：用于提升AI生成质量的参考范文
+  // 这些示例不是硬编码的输出，而是用于指导AI的写作风格
   private examples: FewShotExample[] = [
     // 对话场景示例
     {

@@ -1,13 +1,13 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
-import { 
-  Save, 
-  BookOpen, 
-  FileText, 
-  TrendingUp, 
-  Target, 
-  Users, 
-  Clock 
+import {
+  Save,
+  BookOpen,
+  FileText,
+  TrendingUp,
+  Target,
+  Users,
+  Clock
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +28,14 @@ interface EditorPanelProps {
   chapter: Chapter | undefined;
 }
 
-export function EditorPanel({ project, chapter }: EditorPanelProps) {
+export interface EditorPanelHandle {
+  getContent: () => string;
+  getSelection: () => { start: number; end: number; text: string };
+  insertContent: (text: string, range?: { start: number; end: number }) => void;
+  appendContent: (text: string) => void;
+}
+
+export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ project, chapter }, ref) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
@@ -37,6 +44,65 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
   const [initialWordCount, setInitialWordCount] = useState(0);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    getContent: () => content,
+    getSelection: () => {
+      if (!textareaRef.current) return { start: 0, end: 0, text: "" };
+      const { selectionStart, selectionEnd, value } = textareaRef.current;
+      return {
+        start: selectionStart,
+        end: selectionEnd,
+        text: value.substring(selectionStart, selectionEnd),
+      };
+    },
+    insertContent: (text: string, range?: { start: number; end: number }) => {
+      console.log("[EditorPanel] insertContent called with text length:", text.length, "range:", range);
+      if (!textareaRef.current) {
+        console.error("[EditorPanel] textareaRef is null!");
+        return;
+      }
+      const textarea = textareaRef.current;
+      const start = range ? range.start : textarea.selectionStart;
+      const end = range ? range.end : textarea.selectionEnd;
+      console.log("[EditorPanel] Insertion range:", start, "-", end);
+      setContent((prevContent) => {
+        console.log("[EditorPanel] Updating content. Prev length:", prevContent.length, "Insert text:", text);
+        const newContent = prevContent.substring(0, start) + text + prevContent.substring(end);
+        return newContent;
+      });
+      setHasChanges(true);
+
+      // Restore focus and cursor
+      setTimeout(() => {
+        textarea.focus();
+        // Set cursor to the START of the inserted text so user can read from beginning
+        // Or select the inserted text? Let's just place cursor at start for now to avoid "jumping to bottom"
+        textarea.setSelectionRange(start, start);
+
+        // Optional: Scroll to the cursor position explicitly
+        const lineHeight = 24; // Approximate line height
+        const linesBefore = content.substring(0, start).split('\n').length;
+        const scrollPos = (linesBefore - 2) * lineHeight; // Scroll a bit above
+        if (scrollPos > 0) {
+          // This is a rough estimate, browser usually handles scroll on focus/selection
+          // But if we want to prevent "jumping to bottom", setting cursor at start is key.
+        }
+      }, 0);
+    },
+    appendContent: (text: string) => {
+      setContent(prev => prev + text);
+      setHasChanges(true);
+
+      // Scroll to bottom
+      if (textareaRef.current) {
+        const textarea = textareaRef.current;
+        setTimeout(() => {
+          textarea.scrollTop = textarea.scrollHeight;
+        }, 0);
+      }
+    }
+  }));
 
   // Fetch chapter outline
   const { data: outline } = useQuery<Outline>({
@@ -51,7 +117,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
     enabled: !!chapter?.id,
   });
 
-  // Fetch characters
+  // Fetch characters with auto-refresh
   const { data: characters } = useQuery<Character[]>({
     queryKey: ["/api/characters", project.id],
     queryFn: async () => {
@@ -59,39 +125,51 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
       if (!res.ok) return [];
       return res.json();
     },
+    refetchOnWindowFocus: true,
+    staleTime: 30000,
   });
 
-  // 使用 ref 追踪上一个章节 ID
+  // 使用 ref 追踪上一个章节 ID 和更新时间
   const prevChapterIdRef = useRef<string | undefined>();
+  const prevUpdatedAtRef = useRef<string | undefined>();
 
   useEffect(() => {
     if (chapter) {
       const chapterIdChanged = prevChapterIdRef.current !== chapter.id;
-      
+      // Check if the chapter has been updated on the server since we last saw it
+      // We use string comparison for dates which works for ISO strings
+      const serverUpdated = chapter.updatedAt &&
+        (!prevUpdatedAtRef.current || new Date(chapter.updatedAt).toISOString() > prevUpdatedAtRef.current);
+
       // 在以下情况更新内容：
       // 1. 章节 ID 变化（切换章节）- 强制更新
-      // 2. 没有未保存更改 - 允许自动刷新
-      if (chapterIdChanged || !hasChanges) {
+      // 2. 服务器端有更新且没有未保存的本地更改 - 允许自动刷新
+      // 注意：保存操作后 setHasChanges(false) 会触发此 effect，但此时 chapter.updatedAt 可能还是旧的
+      // 所以我们需要确保只有当服务器时间确实更新了，或者切换了章节时才覆盖本地内容
+      if (chapterIdChanged || (serverUpdated && !hasChanges)) {
         setTitle(chapter.title);
         setContent(chapter.content);
         setInitialWordCount(chapter.content?.replace(/\s/g, "").length || 0);
-        
+
         // 如果是切换章节，重置 hasChanges
         if (chapterIdChanged) {
           setHasChanges(false);
         }
+
+        // Update our tracking refs
+        prevUpdatedAtRef.current = chapter.updatedAt ? new Date(chapter.updatedAt).toISOString() : undefined;
       }
-      
+
       prevChapterIdRef.current = chapter.id;
     }
-  }, [chapter?.id, chapter?.content, chapter?.wordCount, hasChanges]);
+  }, [chapter?.id, chapter?.content, chapter?.wordCount, chapter?.updatedAt, hasChanges]);
 
   const updateChapterMutation = useMutation({
     mutationFn: async () => {
       if (!chapter) return;
-      
+
       const wordCount = content.replace(/\s/g, "").length;
-      
+
       return await apiRequest("PATCH", `/api/chapters/${chapter.id}`, {
         title,
         content,
@@ -153,7 +231,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
         const newContent = content.substring(0, start) + '\n\n' + aiContent + '\n\n' + content.substring(end);
         setContent(newContent);
         setHasChanges(true);
-        
+
         // Set cursor position after inserted content
         setTimeout(() => {
           textarea.focus();
@@ -165,7 +243,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener('insertAIContent', handleInsertAIContent as EventListener);
-    
+
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener('insertAIContent', handleInsertAIContent as EventListener);
@@ -211,7 +289,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
             data-testid="input-chapter-title"
           />
         </div>
-        
+
         <div className="flex items-center justify-between gap-3">
           {/* Writing statistics */}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -244,7 +322,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
                 <PopoverContent className="w-80" align="end">
                   <div className="space-y-3">
                     <h4 className="font-semibold text-sm">章节大纲</h4>
-                    
+
                     {beats.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-xs font-medium text-muted-foreground">节拍</p>
@@ -296,12 +374,12 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
                     角色
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-80" align="end">
+                <PopoverContent className="w-96" align="end">
                   <div className="space-y-3">
                     <h4 className="font-semibold text-sm">角色信息</h4>
-                    <div className="space-y-3 max-h-60 overflow-y-auto">
+                    <div className="space-y-4 max-h-96 overflow-y-auto">
                       {characters.slice(0, 5).map((char) => (
-                        <div key={char.id} className="space-y-1">
+                        <div key={char.id} className="space-y-2 pb-3 border-b last:border-0">
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-xs">{char.role}</Badge>
                             <span className="font-medium text-sm">{char.name}</span>
@@ -311,6 +389,51 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
                               {char.personality}
                             </p>
                           )}
+                          {(char.currentEmotion || char.currentGoal || char.shortMotivation) && (
+                            <div className="space-y-1 mt-2 pt-2 border-t">
+                              <p className="text-xs font-semibold text-muted-foreground">当前状态</p>
+                              {char.shortMotivation && (
+                                <p className="text-xs">
+                                  <span className="text-muted-foreground">动机：</span>
+                                  {char.shortMotivation}
+                                </p>
+                              )}
+                              {char.currentEmotion && (
+                                <p className="text-xs">
+                                  <span className="text-muted-foreground">情感：</span>
+                                  {char.currentEmotion}
+                                </p>
+                              )}
+                              {char.currentGoal && (
+                                <p className="text-xs">
+                                  <span className="text-muted-foreground">目标：</span>
+                                  {char.currentGoal}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          {char.mentionCount && (
+                            <p className="text-xs text-muted-foreground">
+                              已出场 {char.mentionCount} 次
+                            </p>
+                          )}
+                          {(() => {
+                            const arcPoints = char.arcPoints as unknown as string[] | null;
+                            return arcPoints && Array.isArray(arcPoints) && arcPoints.length > 0 && (
+                              <div className="mt-2 pt-2 border-t">
+                                <p className="text-xs font-semibold text-muted-foreground mb-1">
+                                  成长轨迹
+                                </p>
+                                <div className="flex flex-wrap gap-1">
+                                  {arcPoints.slice(-3).map((point, i) => (
+                                    <Badge key={i} variant="secondary" className="text-xs">
+                                      {point}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -327,7 +450,7 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
                 <span>{lastSavedAt.toLocaleTimeString()}</span>
               </div>
             )}
-            
+
             {hasChanges && (
               <span className="text-xs text-warning">未保存</span>
             )}
@@ -364,4 +487,6 @@ export function EditorPanel({ project, chapter }: EditorPanelProps) {
       </div>
     </div>
   );
-}
+});
+
+EditorPanel.displayName = "EditorPanel";

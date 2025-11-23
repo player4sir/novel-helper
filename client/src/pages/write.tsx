@@ -1,24 +1,55 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { BookOpen, Save, Sparkles, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChapterSidebar } from "@/components/write/chapter-sidebar";
-import { EditorPanel } from "@/components/write/editor-panel";
+import { EditorPanel, type EditorPanelHandle } from "@/components/write/editor-panel";
 import { AIAssistantPanel } from "@/components/write/ai-assistant-panel";
 import { SceneDetailsPanel } from "@/components/write/scene-details-panel";
-import { CacheStatsPanel } from "@/components/write/cache-stats-panel";
+import { PlotCardsPanel } from "@/components/write/plot-cards-panel";
 import { ProjectSelector } from "@/components/write/project-selector";
-import { NewProjectDialog } from "@/components/write/new-project-dialog";
+import { AutoWriterControl } from "@/components/creation/AutoWriterControl";
+import { StyleLab } from "@/components/creation/StyleLab";
+
 import { GenerateContentButton } from "@/components/write/generate-content-button";
+import { useChapterGeneration } from "@/hooks/use-chapter-generation";
 import type { Project, Chapter } from "@shared/schema";
 
 export default function Write() {
   const [, navigate] = useLocation();
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
-  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const projectId = searchParams.get("project");
+    if (projectId) {
+      setSelectedProjectId(projectId);
+    }
+  }, []);
+
+  const editorRef = useRef<EditorPanelHandle>(null);
+
+  const { startGeneration, stopGeneration, isGenerating } = useChapterGeneration({
+    onChunk: (chunk) => {
+      if (editorRef.current) {
+        editorRef.current.appendContent(chunk);
+      }
+    },
+    onSceneStart: (index, total, purpose) => {
+      if (editorRef.current) {
+        // Add separator if not the first scene
+        const separator = index > 0 ? "\n\n***\n\n" : "";
+        // Add scene header (optional, can be removed later by user)
+        // Using a distinct format that looks like a draft note
+        const header = `\n\n【场景 ${index + 1}/${total}：${purpose}】\n\n`;
+
+        editorRef.current.appendContent(separator + header);
+      }
+    }
+  });
 
   const { data: projects } = useQuery<Project[]>({
     queryKey: ["/api/projects"],
@@ -42,7 +73,7 @@ export default function Write() {
             projects={projects || []}
             selectedProjectId={selectedProjectId}
             onSelectProject={setSelectedProjectId}
-            onNewProject={() => setShowNewProjectDialog(true)}
+
           />
         </div>
 
@@ -57,13 +88,9 @@ export default function Write() {
               </div>
               {(!selectedChapter.content || selectedChapter.content.length < 100) && (
                 <GenerateContentButton
-                  projectId={selectedProjectId}
-                  chapterId={selectedChapter.id}
-                  chapterTitle={selectedChapter.title}
-                  onSuccess={() => {
-                    // 生成成功后，章节数据会通过 invalidateQueries 自动刷新
-                    // 无需额外操作，React Query 会自动重新获取数据
-                  }}
+                  isGenerating={isGenerating}
+                  onGenerate={() => startGeneration(selectedProjectId, selectedChapter.id)}
+                  onStop={stopGeneration}
                 />
               )}
               <Button variant="ghost" size="sm" data-testid="button-save-chapter">
@@ -89,6 +116,7 @@ export default function Write() {
 
             {/* Center: Editor */}
             <EditorPanel
+              ref={editorRef}
               project={selectedProject}
               chapter={selectedChapter}
             />
@@ -96,28 +124,46 @@ export default function Write() {
             {/* Right: Panels */}
             <div className="w-80 border-l border-border flex flex-col">
               <Tabs defaultValue="assistant" className="flex-1 flex flex-col">
-                <TabsList className="grid w-full grid-cols-3 mx-4 mt-4">
-                  <TabsTrigger value="assistant">AI助手</TabsTrigger>
-                  <TabsTrigger value="scenes">场景</TabsTrigger>
-                  <TabsTrigger value="stats">统计</TabsTrigger>
-                </TabsList>
+                <div className="px-4 mt-4">
+                  <TabsList className="grid w-full grid-cols-5">
+                    <TabsTrigger value="assistant">AI助手</TabsTrigger>
+                    <TabsTrigger value="scenes">场景</TabsTrigger>
+                    <TabsTrigger value="plots">情节</TabsTrigger>
+                    <TabsTrigger value="auto">自动</TabsTrigger>
+                    <TabsTrigger value="styles">风格</TabsTrigger>
+                  </TabsList>
+                </div>
                 <TabsContent value="assistant" className="flex-1 mt-0">
                   <AIAssistantPanel
                     projectId={selectedProject.id}
                     chapterId={selectedChapterId}
+                    editorRef={editorRef}
                   />
                 </TabsContent>
                 <TabsContent value="scenes" className="flex-1 mt-0">
-                  {selectedChapterId ? (
-                    <SceneDetailsPanel chapterId={selectedChapterId} />
+                  {selectedChapterId && selectedProjectId ? (
+                    <SceneDetailsPanel chapterId={selectedChapterId} projectId={selectedProjectId} />
                   ) : (
                     <div className="p-4 text-center text-sm text-muted-foreground">
                       请先选择章节
                     </div>
                   )}
                 </TabsContent>
-                <TabsContent value="stats" className="flex-1 mt-0 p-4 space-y-4">
-                  <CacheStatsPanel />
+                <TabsContent value="plots" className="flex-1 mt-0 overflow-hidden">
+                  <PlotCardsPanel
+                    projectId={selectedProjectId}
+                    onInsert={(content) => {
+                      if (editorRef.current) {
+                        editorRef.current.appendContent(content);
+                      }
+                    }}
+                  />
+                </TabsContent>
+                <TabsContent value="auto" className="flex-1 mt-0 p-4">
+                  <AutoWriterControl projectId={selectedProject.id} />
+                </TabsContent>
+                <TabsContent value="styles" className="flex-1 mt-0 overflow-hidden">
+                  <StyleLab projectId={selectedProject.id} />
                 </TabsContent>
               </Tabs>
             </div>
@@ -130,23 +176,17 @@ export default function Write() {
               <p className="text-sm text-muted-foreground mb-6">
                 选择一个现有项目继续创作，或创建一个新项目开始您的小说之旅
               </p>
-              <Button onClick={() => setShowNewProjectDialog(true)} data-testid="button-start-writing">
-                <Sparkles className="h-4 w-4 mr-2" />
-                开始创作
+              <Button onClick={() => navigate("/")} data-testid="button-go-dashboard">
+                <BookOpen className="h-4 w-4 mr-2" />
+                前往项目概览
               </Button>
             </div>
           </div>
-        )}
-      </div>
+        )
+        }
+      </div >
 
-      <NewProjectDialog
-        open={showNewProjectDialog}
-        onOpenChange={setShowNewProjectDialog}
-        onProjectCreated={(projectId) => {
-          setSelectedProjectId(projectId);
-          setShowNewProjectDialog(false);
-        }}
-      />
-    </div>
+
+    </div >
   );
 }

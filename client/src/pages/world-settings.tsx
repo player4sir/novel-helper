@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Globe, Trash2, Edit, Swords, Map, Building2, Scroll, Package } from "lucide-react";
+import { Plus, Globe, Trash2, Edit, Swords, Map, Building2, Scroll, Package, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -28,6 +28,7 @@ import { insertWorldSettingSchema, type Project, type WorldSetting } from "@shar
 import { z } from "zod";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GenerateWorldSettingsDialog } from "@/components/world/generate-world-settings-dialog";
 
 const categoryConfig = {
   power_system: { label: "力量体系", icon: Swords, color: "text-red-500" },
@@ -141,91 +142,102 @@ export default function WorldSettings() {
             构建小说的世界体系、力量规则和背景设定
           </p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
-          <DialogTrigger asChild>
-            <Button disabled={!selectedProjectId}>
-              <Plus className="h-4 w-4 mr-2" />
-              添加设定
+        <div className="flex items-center gap-2">
+          <GenerateWorldSettingsDialog
+            projectId={selectedProjectId}
+            category={activeCategory !== "all" ? activeCategory : undefined}
+          >
+            <Button variant="outline" disabled={!selectedProjectId}>
+              <Sparkles className="h-4 w-4 mr-2" />
+              AI生成
             </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-3xl max-h-[90vh]">
-            <DialogHeader>
-              <DialogTitle>{editingSetting ? "编辑设定" : "添加设定"}</DialogTitle>
-            </DialogHeader>
-            <ScrollArea className="max-h-[calc(90vh-8rem)] pr-4">
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+          </GenerateWorldSettingsDialog>
+          <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+            <DialogTrigger asChild>
+              <Button disabled={!selectedProjectId}>
+                <Plus className="h-4 w-4 mr-2" />
+                添加设定
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-3xl max-h-[90vh]">
+              <DialogHeader>
+                <DialogTitle>{editingSetting ? "编辑设定" : "添加设定"}</DialogTitle>
+              </DialogHeader>
+              <ScrollArea className="max-h-[calc(90vh-8rem)] pr-4">
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="title"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>标题</FormLabel>
+                            <FormControl>
+                              <Input placeholder="如：修炼境界体系" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="category"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>分类</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {Object.entries(categoryConfig).map(([key, { label }]) => (
+                                  <SelectItem key={key} value={key}>
+                                    {label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
                     <FormField
                       control={form.control}
-                      name="title"
+                      name="content"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>标题</FormLabel>
+                          <FormLabel>详细内容</FormLabel>
                           <FormControl>
-                            <Input placeholder="如：修炼境界体系" {...field} />
+                            <Textarea
+                              placeholder="详细描述世界观设定..."
+                              rows={12}
+                              {...field}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name="category"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>分类</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {Object.entries(categoryConfig).map(([key, { label }]) => (
-                                <SelectItem key={key} value={key}>
-                                  {label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
 
-                  <FormField
-                    control={form.control}
-                    name="content"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>详细内容</FormLabel>
-                        <FormControl>
-                          <Textarea 
-                            placeholder="详细描述世界观设定..." 
-                            rows={12} 
-                            {...field} 
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <div className="flex justify-end gap-3 pt-4">
-                    <Button type="button" variant="outline" onClick={closeDialog}>
-                      取消
-                    </Button>
-                    <Button type="submit" disabled={createSettingMutation.isPending}>
-                      {createSettingMutation.isPending ? "保存中..." : editingSetting ? "保存修改" : "添加设定"}
-                    </Button>
-                  </div>
-                </form>
-              </Form>
-            </ScrollArea>
-          </DialogContent>
-        </Dialog>
+                    <div className="flex justify-end gap-3 pt-4">
+                      <Button type="button" variant="outline" onClick={closeDialog}>
+                        取消
+                      </Button>
+                      <Button type="submit" disabled={createSettingMutation.isPending}>
+                        {createSettingMutation.isPending ? "保存中..." : editingSetting ? "保存修改" : "添加设定"}
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              </ScrollArea>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="w-64">

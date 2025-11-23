@@ -65,12 +65,26 @@ app.use((req, res, next) => {
     // 测试数据库连接
     const { testDatabaseConnection } = await import("./startup-wrapper");
     await testDatabaseConnection();
+    
+    // 测试队列连接（内存模式）
+    const { testQueueConnection } = await import("./queue-connection");
+    await testQueueConnection();
+    
+    // 初始化核心模板 - DISABLED: Use seed-prompt-templates.ts instead
+    // const { initializeCoreTemplates } = await import("./init-core-templates");
+    // await initializeCoreTemplates();
+    console.log("[Init] Skipping core templates initialization. Run 'npm run seed:templates' to initialize templates.");
   } catch (err) {
     console.error("✗ Startup failed:", err);
     process.exit(1);
   }
 
   const server = await registerRoutes(app);
+
+  // Start session cleanup job
+  const { startSessionCleanupJob } = await import("./jobs/session-cleanup");
+  startSessionCleanupJob();
+  console.log("[Init] Session cleanup job started");
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

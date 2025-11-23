@@ -200,18 +200,19 @@ export class EntityStateService {
 
     const overlapRatio = overlap / Math.max(motivationKeywords.length, 1);
 
-    // 如果重叠度低于30%，可能存在动机漂移
-    const drifted = overlapRatio < 0.3;
-    const confidence = drifted ? 1 - overlapRatio : 0;
+    // 降低阈值到15%，减少误报 - 只有在严重不符时才报告
+    // 同时要求confidence > 0.7才认为是真正的漂移
+    const drifted = overlapRatio < 0.15;
+    const confidence = drifted ? Math.min(1 - overlapRatio, 0.85) : 0;
 
     const evidence: string[] = [];
-    if (drifted) {
+    if (drifted && confidence > 0.7) {
       evidence.push(`[规则检测] 角色动机关键词：${motivationKeywords.join("、")}`);
       evidence.push(`[规则检测] 实际行为关键词：${actionKeywords.join("、")}`);
       evidence.push(`[规则检测] 重叠度：${(overlapRatio * 100).toFixed(1)}%`);
     }
 
-    return { drifted, confidence, evidence };
+    return { drifted: drifted && confidence > 0.7, confidence, evidence };
   }
 
   /**
@@ -249,19 +250,21 @@ export class EntityStateService {
       behaviorEmbedding
     );
 
-    // 相似度低于0.6认为存在漂移
-    const drifted = similarity < 0.6;
-    const confidence = drifted ? 1 - similarity : 0;
+    // 降低阈值到0.4，只在严重不符时报告
+    // 相似度低于0.4才认为存在漂移
+    const drifted = similarity < 0.4;
+    const confidence = drifted ? Math.min(1 - similarity, 0.9) : 0;
 
     const evidence: string[] = [];
-    if (drifted) {
+    // 只有在confidence > 0.7时才记录证据
+    if (drifted && confidence > 0.7) {
       evidence.push(
         `[语义检测] 动机与行为相似度：${(similarity * 100).toFixed(1)}%`
       );
       evidence.push(`[语义检测] 角色行为片段：${characterContent.substring(0, 100)}...`);
     }
 
-    return { drifted, confidence, evidence };
+    return { drifted: drifted && confidence > 0.7, confidence, evidence };
   }
 
   /**
@@ -434,8 +437,8 @@ export class EntityStateService {
     limit: number = 3
   ): Promise<any[]> {
     try {
-      const history = await storage.getCharacterStateHistory(characterId);
-      return history.slice(-limit).reverse();
+      const history = await storage.getCharacterStateHistory(characterId, limit);
+      return history;
     } catch (error) {
       console.error("[Entity State] Failed to get recent history:", error);
       return [];
@@ -489,23 +492,57 @@ export class EntityStateService {
       );
       if (!characterContent) return;
 
-      // 简单的情感分析（可以用AI增强）
-      const emotion = this.detectEmotion(characterContent);
-      const goal = this.detectGoal(characterContent);
+      // 尝试使用AI增强提取（如果内容足够长）
+      let emotion: string | undefined;
+      let goal: string | undefined;
+      let arcPoint: string | undefined;
+
+      if (characterContent.length > 100) {
+        try {
+          // 使用AI提取（更准确）
+          const aiExtracted = await this.extractStateWithAI(
+            character.name,
+            characterContent
+          );
+          emotion = aiExtracted.emotion;
+          goal = aiExtracted.goal;
+          arcPoint = aiExtracted.arcPoint;
+          
+          console.log(
+            `[Entity State] AI extraction for ${character.name}: ` +
+            `emotion=${emotion || 'none'}, goal=${goal || 'none'}, arcPoint=${arcPoint || 'none'}`
+          );
+        } catch (aiError) {
+          console.log(
+            `[Entity State] AI extraction failed for ${character.name}, using rule-based`
+          );
+          // Fallback to rule-based
+          emotion = this.detectEmotion(characterContent);
+          goal = this.detectGoal(characterContent);
+          arcPoint = this.detectArcPoint(characterContent, character.name);
+        }
+      } else {
+        // 内容太短，使用规则检测
+        emotion = this.detectEmotion(characterContent);
+        goal = this.detectGoal(characterContent);
+        arcPoint = this.detectArcPoint(characterContent, character.name);
+      }
 
       // 更新状态
-      if (emotion || goal) {
-        await this.updateEntityState(characterId, { emotion, goal });
+      if (emotion || goal || arcPoint) {
+        await this.updateEntityState(characterId, { emotion, goal, arcPoint });
 
         // 记录历史
         await this.recordStateHistory(characterId, chapterId, sceneIndex, {
           emotion,
           goal,
+          arcPoint,
           notes: `自动检测：${characterContent.substring(0, 50)}...`,
         });
 
         console.log(
-          `[Entity State] Auto-updated state for ${character.name}: emotion=${emotion}, goal=${goal}`
+          `[Entity State] Auto-updated state for ${character.name}: ` +
+          `emotion=${emotion}, goal=${goal}, arcPoint=${arcPoint ? arcPoint.substring(0, 30) : 'none'}`
         );
       }
     } catch (error) {
@@ -514,22 +551,134 @@ export class EntityStateService {
   }
 
   /**
-   * 检测情感（简单规则）
+   * 使用AI提取角色状态（更准确）
+   */
+  private async extractStateWithAI(
+    characterName: string,
+    content: string
+  ): Promise<{
+    emotion?: string;
+    goal?: string;
+    arcPoint?: string;
+  }> {
+    const { aiService } = await import("./ai-service");
+
+    const prompt = `分析以下内容中"${characterName}"的状态，提取：
+1. 当前情绪（一个词，如：愤怒、喜悦、恐惧、坚定等）
+2. 当前目标（一句话，如果有明确目标）
+3. 成长时刻（如果有重要的觉悟、突破、转变等）
+
+内容：
+${content}
+
+请以JSON格式返回：
+{
+  "emotion": "情绪词或null",
+  "goal": "目标描述或null",
+  "arcPoint": "成长时刻描述或null"
+}
+
+注意：
+- 如果没有明确信息，返回null
+- emotion只返回一个词
+- goal要简洁（10-20字）
+- arcPoint要包含类型（如"觉悟："、"突破："等）`;
+
+    try {
+      // 获取默认模型配置
+      const models = await storage.getAIModels();
+      const defaultModel = models.find(m => m.isDefaultChat && m.isActive);
+      
+      if (!defaultModel) {
+        throw new Error("No default chat model configured");
+      }
+
+      const result = await aiService.generate({
+        prompt,
+        modelId: defaultModel.modelId,
+        provider: defaultModel.provider,
+        baseUrl: defaultModel.baseUrl || "",
+        apiKey: defaultModel.apiKey || undefined,
+        parameters: {
+          temperature: 0.3, // 低温度，更准确
+          maxTokens: 200,
+        },
+      });
+
+      // 解析JSON
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          emotion: parsed.emotion || undefined,
+          goal: parsed.goal || undefined,
+          arcPoint: parsed.arcPoint || undefined,
+        };
+      }
+    } catch (error) {
+      console.error("[Entity State] AI extraction parse failed:", error);
+    }
+
+    return {};
+  }
+
+  /**
+   * 检测情感（增强规则）
    */
   private detectEmotion(content: string): string | undefined {
     const emotionKeywords = {
-      愤怒: ["愤怒", "生气", "暴怒", "怒火"],
-      悲伤: ["悲伤", "难过", "伤心", "哭泣"],
-      喜悦: ["高兴", "开心", "喜悦", "欢喜"],
-      恐惧: ["害怕", "恐惧", "惊恐", "畏惧"],
-      惊讶: ["惊讶", "震惊", "诧异", "惊愕"],
-      焦虑: ["焦虑", "担心", "忧虑", "不安"],
-      坚定: ["坚定", "决心", "果断", "毅然"],
+      愤怒: ["愤怒", "生气", "暴怒", "怒火", "气得", "恼怒", "发怒", "火冒三丈"],
+      悲伤: ["悲伤", "难过", "伤心", "哭泣", "流泪", "痛苦", "悲痛", "心碎"],
+      喜悦: ["高兴", "开心", "喜悦", "欢喜", "笑", "兴奋", "愉快", "欣喜"],
+      恐惧: ["害怕", "恐惧", "惊恐", "畏惧", "颤抖", "胆怯", "惊慌", "恐慌"],
+      惊讶: ["惊讶", "震惊", "诧异", "惊愕", "愣住", "呆住", "目瞪口呆"],
+      焦虑: ["焦虑", "担心", "忧虑", "不安", "紧张", "着急", "烦躁"],
+      坚定: ["坚定", "决心", "果断", "毅然", "坚决", "毫不犹豫", "义无反顾"],
+      冷静: ["冷静", "镇定", "沉着", "从容", "淡定"],
+      紧张: ["紧张", "忐忑", "心跳加速", "手心出汗"],
     };
 
+    // 计算每种情感的匹配度
+    let maxScore = 0;
+    let detectedEmotion: string | undefined;
+
     for (const [emotion, keywords] of Object.entries(emotionKeywords)) {
-      if (keywords.some((k) => content.includes(k))) {
-        return emotion;
+      const score = keywords.filter((k) => content.includes(k)).length;
+      if (score > maxScore) {
+        maxScore = score;
+        detectedEmotion = emotion;
+      }
+    }
+
+    return maxScore > 0 ? detectedEmotion : undefined;
+  }
+
+  /**
+   * 检测目标（增强规则）
+   */
+  private detectGoal(content: string): string | undefined {
+    // 更全面的目标模式
+    const goalPatterns = [
+      /["""]([^"""]*?要[^"""]*?)["""]/,  // 对话中的目标
+      /要(.*?)[。！？]/,
+      /必须(.*?)[。！？]/,
+      /决定(.*?)[。！？]/,
+      /打算(.*?)[。！？]/,
+      /准备(.*?)[。！？]/,
+      /计划(.*?)[。！？]/,
+      /想要(.*?)[。！？]/,
+      /希望(.*?)[。！？]/,
+      /目标是(.*?)[。！？]/,
+    ];
+
+    for (const pattern of goalPatterns) {
+      const match = content.match(pattern);
+      if (match && match[1]) {
+        const goal = match[1].trim();
+        // 过滤掉过短或无意义的目标
+        if (goal.length > 3 && goal.length < 50) {
+          return goal;
+        }
       }
     }
 
@@ -537,20 +686,29 @@ export class EntityStateService {
   }
 
   /**
-   * 检测目标（简单规则）
+   * 检测弧光点（重要成长时刻）
    */
-  private detectGoal(content: string): string | undefined {
-    const goalPatterns = [
-      /要(.*?)[。！]/,
-      /必须(.*?)[。！]/,
-      /决定(.*?)[。！]/,
-      /打算(.*?)[。！]/,
-    ];
+  private detectArcPoint(content: string, characterName: string): string | undefined {
+    const arcPointKeywords = {
+      突破: ["突破", "顿悟", "领悟", "觉醒"],
+      决心: ["发誓", "立誓", "决心", "下定决心"],
+      转变: ["改变", "转变", "不再", "从此"],
+      牺牲: ["牺牲", "放弃", "舍弃"],
+      胜利: ["战胜", "击败", "成功", "胜利"],
+      失败: ["失败", "落败", "失去"],
+      觉悟: ["明白", "理解", "意识到", "终于"],
+      成长: ["成长", "蜕变", "进化", "升华"],
+    };
 
-    for (const pattern of goalPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        return match[1].trim();
+    for (const [type, keywords] of Object.entries(arcPointKeywords)) {
+      if (keywords.some((k) => content.includes(k) && content.includes(characterName))) {
+        // 提取关键句子
+        const sentences = content.split(/[。！？]/);
+        for (const sentence of sentences) {
+          if (sentence.includes(characterName) && keywords.some(k => sentence.includes(k))) {
+            return `${type}：${sentence.trim().substring(0, 30)}`;
+          }
+        }
       }
     }
 
