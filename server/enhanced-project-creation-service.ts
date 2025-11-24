@@ -56,6 +56,7 @@ export interface ProjectMeta {
   mainEntities: EntitySummary[];
   worldRules: string[];
   worldSettings?: any; // WorldSetting from world-generator
+  worldMystery?: string; // [NEW] 世界谜团/隐藏真相
   keywords: string[];
   // Directives for parallel generation
   worldDirective?: string;
@@ -84,6 +85,8 @@ export interface EntitySummary {
   innerConflict?: string; // 内心冲突
   hiddenGoal?: string; // 隐藏目标
   growthPath?: string; // 成长路径
+  flaw?: string; // [NEW] 弱点/缺陷
+  habit?: string; // [NEW] 习惯/怪癖
 }
 
 export interface ScoredCandidate {
@@ -128,9 +131,12 @@ const ProjectMetaSchema = z.object({
     appearance: z.string().optional(),
     background: z.string().optional(),
     abilities: z.string().optional(),
+    flaw: z.string().optional(),
+    habit: z.string().optional(),
   })).optional().default([]),
   worldRules: z.array(z.string()).optional().default([]),
   keywords: z.array(z.string()).optional().default([]),
+  worldMystery: z.string().optional(),
   worldDirective: z.string().optional(),
   characterDirective: z.string().optional(),
 }).transform((data) => ({
@@ -552,30 +558,16 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
     modules.push({
       id: "innovation-guidelines",
       priority: "important",
-      content: `# 创新要求
+      content: `# 创意激发
+**目标**: 创作一个令人耳目一新的故事，打破常规，探索未知的可能性。
 
-**关键**: 这个项目必须有独特性，避免常见套路。
+## 推荐尝试的方向
+- **反套路设定**: 思考传统套路的对立面。例如，如果传统是"逆天改命"，那么"顺应天命但寻找自由"会是怎样的？
+- **深度动机**: 赋予角色复杂的内心驱动力。不仅仅是仇恨或贪婪，还可以是信仰、救赎、对真理的渴望或扭曲的爱。
+- **独特世界观**: 创造一个有独特规则的世界。例如，力量体系可以建立在艺术、情感、记忆或哲学概念之上，而不仅仅是灵气或魔法。
 
-## 必须避免的俗套设定
-- 家族被灭的复仇者
-- 穿越/重生后开挂
-- 废材逆袭打脸流
-- 标准修仙境界体系(筑基-金丹-元婴...)
-- 天赋异禀的主角光环
-
-## 创新检查点
-请确保你的设定在以下至少2个维度上有创新:
-1. **世界观创新**: 独特的规则体系或设定
-2. **角色创新**: 复杂的动机或反传统人设
-3. **冲突创新**: 非典型的矛盾结构
-4. **叙事创新**: 独特的故事推进方式
-
-## 示例: 创新vs套路
-❌ 套路: "修炼者吸收灵气突破境界"
-✓ 创新: "修炼需要与书中世界的虚构角色建立情感连接,情感越深厚力量越强"
-
-❌ 套路: "主角为家族复仇而修炼"
-✓ 创新: "主角的目标是阻止自己成为预言中的毁灭者,但越努力越接近命运"`,
+## 避免单一化
+不要让故事流于表面。如果主角要复仇，请探讨复仇带来的空虚；如果主角要变强，请展示变强背后的代价。`,
       estimatedTokens: 200,
       compressible: false,
     });
@@ -600,8 +592,11 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
    - appearance: 外貌特征（30-80字）
    - background: 背景故事（50-150字）
    - abilities: 能力特长（30-80字，如果是现实题材可以是技能或优势）
+   - flaw: 弱点或性格缺陷（让角色更真实，如：傲慢、贪财、恐惧某物）
+   - habit: 独特的习惯或怪癖（增加记忆点，如：紧张时咬手指、喜欢收集旧物）
 7. **世界规则**: 2-4条核心世界观规则（如果是现实题材可以是社会规则）
-8. **关键词**: 5-8个关键词，用于后续内容生成
+8. **世界谜团**: 一个关于这个世界的隐藏真相或未解之谜（增加深度）
+9. **关键词**: 5-8个关键词，用于后续内容生成
 
 **重要**: 所有内容必须使用纯正的中文，避免英文或拼音混杂。`,
       estimatedTokens: 200,
@@ -633,10 +628,13 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
       "personality": "性格特点（30-80字，纯中文）",
       "appearance": "外貌特征（30-80字，纯中文）",
       "background": "背景故事（50-150字，纯中文）",
-      "abilities": "能力特长（30-80字，纯中文）"
+      "abilities": "能力特长（30-80字，纯中文）",
+      "flaw": "弱点/缺陷（纯中文）",
+      "habit": "习惯/怪癖（纯中文）"
     }
   ],
   "worldRules": ["规则1（纯中文）", "规则2（纯中文）"],
+  "worldMystery": "世界谜团（纯中文）：关于这个世界的隐藏真相或未解之谜",
   "keywords": ["关键词1", "关键词2", "关键词3"]
 }
 
@@ -1563,7 +1561,7 @@ ${JSON.stringify(candidatesJson, null, 2)}
         abilities: entity.abilities || "",
         relationships: extractRelationships(meta.mainEntities, entity), // 智能分析关系
         growth: generateGrowthPath(entity, meta.coreConflicts), // 生成成长路径
-        notes: `创建于项目初始化（AI生成）`,
+        notes: `创建于项目初始化（AI生成）\n弱点：${entity.flaw || "无"}\n习惯：${entity.habit || "无"}`,
         arcPoints: generateInitialArcPoints(entity, meta.coreConflicts), // 初始弧光点
         currentEmotion: extractInitialEmotion(entity.shortMotivation), // 初始情感
         currentGoal: entity.shortMotivation, // 初始目标即为核心动机
@@ -1573,6 +1571,18 @@ ${JSON.stringify(candidatesJson, null, 2)}
 
     // Create enhanced world settings (智能分类)
     await createEnhancedWorldSettings(projectId, meta);
+
+    // [NEW] Create World Mystery Setting
+    if (meta.worldMystery) {
+      await storage.createWorldSetting({
+        projectId,
+        category: "secret",
+        title: "世界谜团",
+        content: meta.worldMystery,
+        tags: ["隐藏真相", "伏笔"],
+        details: { source: "AI生成", importance: "high" },
+      });
+    }
 
     // Create enhanced outline structure (层级化大纲)
     await createEnhancedOutlines(projectId, mainOutline.id, meta);
@@ -1649,41 +1659,38 @@ ${meta.keywords.join("、")} `;
    * Build few-shot guidance based on seed and candidate index
    */
   private async buildFewShotGuidance(seed: ProjectSeed, index: number): Promise<string> {
-    // Map genre/style to scene types for style reference
-    let sceneType = "描写"; // Default
-    let purpose = "氛围";
+    // Get all examples and filter for project-meta
+    const allExamples = fewShotExamplesService.getAllExamples();
+    const metaExamples = allExamples.filter(e => e.category === "project-meta");
 
+    if (metaExamples.length === 0) return "";
+
+    // Select a relevant example based on genre or random
+    let selectedExample = metaExamples[0];
     const genre = seed.genre || "";
 
-    // 使用配置化的类型匹配
+    // Simple genre matching
     if (genreConfigService.matchesGenre(genre, "玄幻") || genreConfigService.matchesGenre(genre, "仙侠")) {
-      sceneType = index % 2 === 0 ? "修炼" : "动作";
-      purpose = index % 2 === 0 ? "突破" : "战斗";
-    } else if (genreConfigService.matchesGenre(genre, "悬疑")) {
-      sceneType = "发现";
-      purpose = "线索";
-    } else if (genreConfigService.matchesGenre(genre, "言情") || genreConfigService.matchesGenre(genre, "都市")) {
-      sceneType = index % 2 === 0 ? "情感" : "对话";
-      purpose = "冲突";
+      const match = metaExamples.find(e => e.tags.includes("玄幻") || e.tags.includes("仙侠"));
+      if (match) selectedExample = match;
+    } else if (genreConfigService.matchesGenre(genre, "悬疑") || genreConfigService.matchesGenre(genre, "惊悚")) {
+      const match = metaExamples.find(e => e.tags.includes("悬疑"));
+      if (match) selectedExample = match;
+    } else if (genreConfigService.matchesGenre(genre, "都市") || genreConfigService.matchesGenre(genre, "言情")) {
+      const match = metaExamples.find(e => e.tags.includes("都市"));
+      if (match) selectedExample = match;
+    } else {
+      // Randomly select one for diversity if no genre match
+      selectedExample = metaExamples[index % metaExamples.length];
     }
 
-    // Get examples
-    const examples = await fewShotExamplesService.getRelevantExamples(
-      sceneType,
-      purpose,
-      1
-    );
-
-    if (examples.length === 0) return "";
-
-    const example = examples[0];
-
     return `
-# 风格参考
-请参考以下${sceneType}场景的描写风格（注意：仅参考文笔和基调，不要照搬内容）：
+# 创意参考示例
+以下是一个高分的小说项目设定示例，请参考其**创意深度**、**世界观的独特性**以及**角色动机的复杂性**。
+注意：不要照搬内容，而是学习其如何构建非套路的故事。
 
 ---
-${example.example}
+${selectedExample.example}
 ---
 `;
   }
