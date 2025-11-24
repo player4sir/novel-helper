@@ -20,6 +20,7 @@ export interface DraftContext {
   storyContext?: string; // Added story context
   characters?: Character[] | any[]; // Allow both full Character type and partial character objects
   worldSettings?: string;
+  globalMemory?: string; // Added global memory
   sceneFrame?: SceneFrame;
   projectSummary?: {
     coreConflicts: string;
@@ -698,7 +699,14 @@ export class SceneDraftServiceOptimized {
       styleGuidelines: context.projectSummary?.toneProfile || '',
       previousSummary: context.previousContent || '', // Use full content passed from service
       storyContext: context.storyContext || '', // Pass story context
-      worldSettings: this.chapterComponentCache.get(chapterId)?.worldSettings || context.worldSettings || '',
+      worldSettings: (context.globalMemory ? `【全局关键规则】\n${context.globalMemory}\n\n` : '') + (this.chapterComponentCache.get(chapterId)?.worldSettings || context.worldSettings || ''),
+      negativeConstraints: `
+- **禁止AI惯用语**：严禁使用"心中一动"、"不由得"、"嘴角勾起"、"眼神一凝"、"倒吸一口凉气"等陈词滥调。
+- **避免重复句式**：不要连续使用"当...时"或"随着..."开头的句子。
+- **拒绝空洞形容**：不要只说"恐怖的气息"，要描写具体的冷汗、颤抖或压抑感。`,
+      sensoryInstructions: `
+- **感官锚点**：本场景必须包含至少3处具体的感官描写（视觉之外的听觉、嗅觉、触觉或味觉）。
+- **环境互动**：角色必须与环境发生互动（如触碰物体、受天气影响等），而不仅仅是站在背景中对话。`,
     };
   }
 

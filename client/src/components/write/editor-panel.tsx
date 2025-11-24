@@ -19,6 +19,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { SummaryPanel } from "./summary-panel";
+import { VersionHistoryPanel } from "./version-history-panel";
 import { apiRequest } from "@/lib/queryClient";
 import type { Project, Chapter, Outline, Character } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -465,6 +472,38 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
               <Save className="h-3 w-3 mr-2" />
               {updateChapterMutation.isPending ? "保存中..." : "保存"}
             </Button>
+
+            <Separator orientation="vertical" className="h-4" />
+
+            {/* P1 Features: Summary & History */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" title="智能摘要">
+                  <FileText className="h-3 w-3" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[400px] sm:w-[540px] p-0">
+                <SummaryPanel
+                  projectId={project.id}
+                  chapterId={chapter.id}
+                  volumeId={chapter.volumeId || undefined}
+                />
+              </SheetContent>
+            </Sheet>
+
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" title="版本历史">
+                  <Clock className="h-3 w-3" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[400px] sm:w-[540px] p-0">
+                <VersionHistoryPanel
+                  chapterId={chapter.id}
+                  projectId={project.id}
+                />
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
       </div>

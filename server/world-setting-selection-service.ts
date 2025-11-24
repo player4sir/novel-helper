@@ -9,6 +9,7 @@ export interface WorldSettingSelectionOptions {
 
 export interface WorldSettingSelectionResult {
     selectedSettings: WorldSetting[];
+    globalSettings: WorldSetting[];
     contextText: string;
     totalTokens: number;
 }
@@ -31,21 +32,27 @@ export class WorldSettingSelectionService {
             ...options,
         };
 
-        if (allSettings.length === 0) {
+        const globalSettings = allSettings.filter(s => s.category === 'rules' || s.category === 'global');
+        const candidateSettings = allSettings.filter(s => s.category !== 'rules' && s.category !== 'global');
+
+        if (candidateSettings.length === 0) {
+            const globalText = globalSettings.map(s => `${s.title}: ${s.content}`).join("\n");
             return {
                 selectedSettings: [],
-                contextText: "",
-                totalTokens: 0,
+                globalSettings,
+                contextText: globalText,
+                totalTokens: this.estimateTokens(globalText),
             };
         }
 
         // If total settings are small enough, just return all of them
-        const totalText = allSettings.map((s) => `${s.title}: ${s.content}`).join("\n");
-        if (this.estimateTokens(totalText) <= defaultOptions.tokenBudget) {
+        const candidateText = candidateSettings.map((s) => `${s.title}: ${s.content}`).join("\n");
+        if (this.estimateTokens(candidateText) <= defaultOptions.tokenBudget) {
             return {
-                selectedSettings: allSettings,
-                contextText: totalText,
-                totalTokens: this.estimateTokens(totalText),
+                selectedSettings: candidateSettings,
+                globalSettings,
+                contextText: candidateText, // Note: This only includes contextual settings text, global is separate
+                totalTokens: this.estimateTokens(candidateText),
             };
         }
 
@@ -58,7 +65,7 @@ export class WorldSettingSelectionService {
 
             // Calculate relevance scores
             const scoredSettings = [];
-            for (const setting of allSettings) {
+            for (const setting of candidateSettings) {
                 const settingText = `${setting.title}\n${setting.content}`;
                 const settingEmbedding = await aiService.getEmbedding(settingText);
 
@@ -91,19 +98,20 @@ export class WorldSettingSelectionService {
             const contextText = selected.map((s) => `${s.title}: ${s.content}`).join("\n");
 
             console.log(
-                `[World Setting Selection] Selected ${selected.length}/${allSettings.length} settings ` +
-                `(context length: ${context.length}, budget: ${defaultOptions.tokenBudget})`
+                `[World Setting Selection] Selected ${selected.length}/${candidateSettings.length} settings ` +
+                `(Global: ${globalSettings.length}, context length: ${context.length}, budget: ${defaultOptions.tokenBudget})`
             );
 
             return {
                 selectedSettings: selected,
+                globalSettings,
                 contextText,
                 totalTokens: currentTokens,
             };
 
         } catch (error) {
             console.warn("[World Setting Selection] Embedding selection failed, falling back to keyword matching", error);
-            return this.selectByKeywords(allSettings, context, defaultOptions);
+            return this.selectByKeywords(candidateSettings, globalSettings, context, defaultOptions);
         }
     }
 
@@ -111,11 +119,12 @@ export class WorldSettingSelectionService {
      * Fallback selection using keyword matching
      */
     private selectByKeywords(
-        allSettings: WorldSetting[],
+        candidateSettings: WorldSetting[],
+        globalSettings: WorldSetting[],
         context: string,
         options: WorldSettingSelectionOptions
     ): WorldSettingSelectionResult {
-        const scoredSettings = allSettings.map((setting) => {
+        const scoredSettings = candidateSettings.map((setting) => {
             let score = 0;
             const titleKeywords = this.extractKeywords(setting.title);
 
@@ -156,6 +165,7 @@ export class WorldSettingSelectionService {
 
         return {
             selectedSettings: selected,
+            globalSettings,
             contextText,
             totalTokens: currentTokens,
         };

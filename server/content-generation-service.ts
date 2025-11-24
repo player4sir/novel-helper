@@ -152,9 +152,10 @@ export class ContentGenerationService {
                     const draftContext = {
                         previousContent: i === 0
                             ? previousChapterContent // Use actual text from previous chapter
-                            : generatedContent.slice(-2000), // Use recently generated content
+                            : this.getSmartContextWindow(generatedContent, 2000), // Use smart window
                         storyContext: contextSelection.contextText, // Pass semantic context separately
                         characters: this.filterRelevantCharacters(characters, chapterOutline, scene),
+                        globalMemory: worldSettingSelection.globalSettings?.map(s => `${s.title}: ${s.content}`).join("\n") || "",
                         worldSettings: worldSettingSelection.contextText,
                         sceneFrame: scene,
                         projectSummary: mainOutline ? {
@@ -303,6 +304,7 @@ export class ContentGenerationService {
             project
         };
     }
+
     /**
      * Filter characters to include only those relevant for the current context
      */
@@ -317,7 +319,6 @@ export class ContentGenerationService {
         const selectedIds = new Set<string>();
         const selectedCharacters: any[] = [];
 
-        // Helper to add character if not already added
         const addCharacter = (char: any, reason: string) => {
             if (!char || selectedIds.has(char.id)) return;
             selectedIds.add(char.id);
@@ -377,6 +378,35 @@ export class ContentGenerationService {
 
         console.log(`[Context] Filtered characters for scene ${sceneFrame.index}: ${selectedCharacters.map(c => c.name).join(', ')}`);
         return selectedCharacters;
+    }
+
+    /**
+     * Get smart context window that respects paragraph boundaries
+     */
+    private getSmartContextWindow(content: string, maxChars: number): string {
+        if (!content || content.length <= maxChars) {
+            return content;
+        }
+
+        // Take a slightly larger chunk first to find a good break point
+        const rawChunk = content.slice(-(maxChars + 200));
+
+        // Find the first paragraph break (\n\n)
+        const firstBreak = rawChunk.indexOf('\n\n');
+
+        if (firstBreak !== -1 && firstBreak < 200) {
+            // Found a clean paragraph break near the start of our chunk
+            return rawChunk.slice(firstBreak + 2).trim();
+        }
+
+        // Fallback: Find the first sentence end (.!?)
+        const firstSentenceEnd = rawChunk.search(/[。！？\n]/);
+        if (firstSentenceEnd !== -1 && firstSentenceEnd < 200) {
+            return rawChunk.slice(firstSentenceEnd + 1).trim();
+        }
+
+        // Hard fallback
+        return content.slice(-maxChars);
     }
 }
 
