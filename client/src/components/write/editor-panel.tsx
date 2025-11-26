@@ -7,7 +7,8 @@ import {
   TrendingUp,
   Target,
   Users,
-  Clock
+  Clock,
+  Stethoscope
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,10 +23,13 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetHeader,
+  SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { SummaryPanel } from "./summary-panel";
 import { VersionHistoryPanel } from "./version-history-panel";
+import { QualityDashboard } from "../quality-dashboard";
 import { apiRequest } from "@/lib/queryClient";
 import type { Project, Chapter, Outline, Character } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -33,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 interface EditorPanelProps {
   project: Project;
   chapter: Chapter | undefined;
+  bottomActions?: React.ReactNode;
 }
 
 export interface EditorPanelHandle {
@@ -42,14 +47,18 @@ export interface EditorPanelHandle {
   appendContent: (text: string) => void;
 }
 
-export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ project, chapter }, ref) => {
+export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ project, chapter, bottomActions }, ref) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
   const [initialWordCount, setInitialWordCount] = useState(0);
+
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [diagnosisResult, setDiagnosisResult] = useState<any>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [isApplyingSuggestion, setIsApplyingSuggestion] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useImperativeHandle(ref, () => ({
@@ -207,6 +216,88 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
 
   const handleSave = () => {
     updateChapterMutation.mutate();
+  };
+
+  const handleDiagnose = async () => {
+    if (!chapter) return;
+    setIsDiagnosing(true);
+    try {
+      const res = await fetch("/api/editor/diagnose", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId: project.id,
+          chapterId: chapter.id,
+          chapterContent: content,
+          cursorPosition: textareaRef.current?.selectionStart || 0,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setDiagnosisResult(data);
+      toast({
+        title: "诊断完成",
+        description: "已生成章节质量分析报告",
+      });
+    } catch (error: any) {
+      toast({
+        title: "诊断失败",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
+  const handleApplySuggestion = async (issue: any) => {
+    if (!chapter) return;
+    setIsApplyingSuggestion(true);
+    try {
+      const res = await fetch("/api/editor/fix-issue", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId: project.id,
+          chapterId: chapter.id,
+          chapterContent: content,
+          issue: issue.description,
+          suggestion: issue.suggestion,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
+      }
+
+      const data = await res.json();
+
+      // Update content with the rewritten version
+      setContent(data.result);
+      setHasChanges(true);
+
+      toast({
+        title: "优化完成",
+        description: "已根据建议重写章节内容",
+      });
+    } catch (error: any) {
+      toast({
+        title: "优化失败",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingSuggestion(false);
+    }
   };
 
   useEffect(() => {
@@ -504,11 +595,54 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
                 />
               </SheetContent>
             </Sheet>
+
+            {/* Narrative Doctor */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  title="叙事医生"
+                  onClick={handleDiagnose}
+                >
+                  <Stethoscope className={`h-3 w-3 ${isDiagnosing ? 'animate-pulse text-blue-500' : ''}`} />
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[400px] sm:w-[600px] overflow-y-auto">
+                <SheetHeader className="px-6 pt-6 pb-4">
+                  <SheetTitle className="flex items-center gap-2">
+                    <Stethoscope className="h-5 w-5" />
+                    叙事医生诊断报告
+                  </SheetTitle>
+                </SheetHeader>
+                <div className="px-6 pb-6">
+                  {isDiagnosing ? (
+                    <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                      <Stethoscope className="h-12 w-12 animate-pulse text-primary" />
+                      <p className="text-muted-foreground">正在分析章节内容...</p>
+                    </div>
+                  ) : diagnosisResult ? (
+                    <QualityDashboard
+                      qualityScore={diagnosisResult.qualityScore}
+                      innovationScore={diagnosisResult.innovationScore}
+                      issues={diagnosisResult.issues}
+                      onApplySuggestion={handleApplySuggestion}
+                      isApplying={isApplyingSuggestion}
+                    />
+                  ) : (
+                    <div className="text-center py-12 text-muted-foreground">
+                      点击上方按钮开始诊断
+                    </div>
+                  )}
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 pb-20">
         <Textarea
           ref={textareaRef}
           value={content}
@@ -524,6 +658,14 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
           data-testid="textarea-chapter-content"
         />
       </div>
+
+      {bottomActions && (
+        <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto shadow-lg rounded-full bg-background border border-border p-1">
+            {bottomActions}
+          </div>
+        </div>
+      )}
     </div>
   );
 });

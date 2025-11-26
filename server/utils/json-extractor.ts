@@ -12,6 +12,18 @@ export function extractJSON(text: string): any {
         // Strategy 1: Standard JSON.parse (for clean JSON)
         () => JSON.parse(text),
 
+        // Strategy 1.5: Strip <thinking> blocks and try parsing
+        () => {
+            // Remove content between <thinking> and </thinking> (including tags)
+            // Use non-greedy match [\s\S]*? to handle multiple lines
+            const cleanText = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '').trim();
+            // If text was modified, try parsing the result
+            if (cleanText !== text.trim()) {
+                return extractJSON(cleanText);
+            }
+            throw new Error("No thinking blocks found or cleanup didn't help");
+        },
+
         // Strategy 2: Extract from Markdown code block ```json ... ```
         () => {
             const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -49,9 +61,29 @@ export function extractJSON(text: string): any {
 
         // Strategy 5: Repair truncated JSON
         () => {
-            const start = text.indexOf('{');
+            const startObj = text.indexOf('{');
+            const startArr = text.indexOf('[');
+
+            // Determine if we are looking for an object or an array
+            let start = -1;
+            let isArray = false;
+
+            if (startObj !== -1 && startArr !== -1) {
+                if (startObj < startArr) {
+                    start = startObj;
+                } else {
+                    start = startArr;
+                    isArray = true;
+                }
+            } else if (startObj !== -1) {
+                start = startObj;
+            } else if (startArr !== -1) {
+                start = startArr;
+                isArray = true;
+            }
+
             if (start !== -1) {
-                // Take everything from the first '{'
+                // Take everything from the first '{' or '['
                 let jsonStr = text.slice(start);
 
                 // 1. Remove any trailing non-JSON characters (like "..." or text after the cut-off)
@@ -90,8 +122,11 @@ export function extractJSON(text: string): any {
                         if (char === '{' || char === '[') {
                             stack.push(char);
                         } else if (char === '}' || char === ']') {
-                            const last = stack.pop();
-                            // Mismatch handling could be added here
+                            // Check if it matches the last open
+                            const last = stack[stack.length - 1];
+                            if ((char === '}' && last === '{') || (char === ']' && last === '[')) {
+                                stack.pop();
+                            }
                         }
                     }
                 }

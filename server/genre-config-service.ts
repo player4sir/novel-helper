@@ -215,6 +215,53 @@ export class GenreConfigService {
       lowerText.includes(keyword.toLowerCase())
     );
   }
+
+  /**
+   * Generate genre-specific description for system prompt
+   */
+  getGenreDescription(genre: string): string {
+    const genreMap: Record<string, string> = {
+      '玄幻': '高沉浸感、节奏紧凑、想象瑰丽的玄幻小说',
+      '都市': '节奏明快、贴近现实、代入感强的都市小说',
+      '仙侠': '气势恢宏、意境深远、充满东方韵味的仙侠小说',
+      '科幻': '逻辑严谨、设定硬核、充满科技感的科幻小说',
+      '悬疑': '逻辑缜密、线索清晰、悬念迭起的悬疑推理小说',
+      '历史': '历史厚重、考据严谨、笔触典雅的历史小说',
+      '言情': '情感细腻、心理描写深入、浪漫动人的言情小说',
+      '奇幻': '世界观宏大、魔法体系完整、冒险刺激的奇幻小说',
+      '武侠': '江湖气息浓郁、武功描写精彩、侠义精神的武侠小说',
+      '灵异': '氛围诡谲、悬念丛生、恐怖感强的灵异小说',
+      '游戏': '游戏设定完整、升级体系清晰、爽快刺激的游戏小说',
+      '同人': '还原度高、人设贴合、剧情创新的同人小说',
+    };
+
+    return genreMap[genre] || `充满想象力、引人入胜的${genre}小说`;
+  }
+
+  /**
+   * Generate genre-specific instructions
+   */
+  getGenreSpecificInstructions(genre: string): string {
+    const instructionsMap: Record<string, string> = {
+      '科幻': `
+- **硬科幻约束**：确保技术设定符合科学逻辑，避免"玄学化"的科技描写。
+- **世界观一致性**：科技水平、社会结构需前后一致，不要出现修仙、灵力等玄幻元素。`,
+
+      '悬疑': `
+- **线索布置**：每个场景至少埋设1-2个推理线索，关键信息需自然展现。
+- **逻辑自洽**：案件推理过程必须符合逻辑，避免强行逆转或神秘主义解释。`,
+
+      '言情': `
+- **情感细腻**：注重人物内心活动和情感变化，多用心理描写和细节暗示。
+- **互动自然**：角色间的互动要有张力和化学反应，避免直白的"我喜欢你"式告白。`,
+
+      '历史': `
+- **语言考究**：使用符合时代特色的语言风格，避免现代网络用语。
+- **历史细节**：服饰、礼仪、称谓需符合史实，重大历史事件需尊重基本史实。`,
+    };
+
+    return instructionsMap[genre] || '';
+  }
 }
 
 export const genreConfigService = new GenreConfigService();

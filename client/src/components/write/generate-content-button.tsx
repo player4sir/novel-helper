@@ -1,14 +1,16 @@
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface GenerateContentButtonProps {
   isGenerating: boolean;
+  isThinking?: boolean;
   onGenerate: () => void;
   onStop?: () => void;
 }
 
 export function GenerateContentButton({
   isGenerating,
+  isThinking,
   onGenerate,
   onStop,
 }: GenerateContentButtonProps) {
@@ -18,9 +20,19 @@ export function GenerateContentButton({
         onClick={onStop}
         variant="destructive"
         size="sm"
+        className="transition-all duration-300"
       >
-        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-        停止生成
+        {isThinking ? (
+          <>
+            <Brain className="h-4 w-4 mr-2 animate-pulse" />
+            AI思考中...
+          </>
+        ) : (
+          <>
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            正在生成...
+          </>
+        )}
       </Button>
     );
   }

@@ -215,6 +215,90 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
         exit: { opacity: 0, x: -20 },
     };
 
+    const handleRegenerateSection = async (section: string) => {
+        if (!sessionId) return;
+
+        try {
+            const res = await fetch("/api/creation/step/regenerate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    sessionId,
+                    step: section,
+                    options: { temperature: 0.8 } // Add some randomness
+                }),
+            });
+
+            if (!res.ok) throw new Error("Regeneration failed");
+
+            const data = await res.json();
+            if (data.success) {
+                // Update the specific section in stepResults
+                const resultData = data.result.data;
+
+                // Map backend data structure to frontend structure if needed
+                // The backend returns the raw step result data
+                // We need to ensure it matches what StepResultDisplay expects
+
+                setStepResults(prev => {
+                    const newState = { ...prev };
+
+                    if (section === "basic") {
+                        newState.basic = {
+                            title: resultData.title,
+                            premise: resultData.premise,
+                            genre: resultData.genre,
+                            style: resultData.style,
+                            themeTags: resultData.themeTags,
+                            coreConflicts: resultData.coreConflicts,
+                            keywords: resultData.keywords
+                        };
+                    } else if (section === "characters") {
+                        newState.characters = {
+                            characters: resultData.characters?.map((c: any) => ({
+                                ...c,
+                                motivation: c.shortMotivation || c.motivation
+                            })) || [],
+                            relationships: resultData.relationships || []
+                        };
+                    } else if (section === "world") {
+                        newState.world = {
+                            worldSetting: resultData // The backend returns the world setting object directly or wrapped?
+                            // Check CreationOrchestrator.executeWorldStep return format
+                            // It returns { worldSettings: ... } or just the settings?
+                            // Let's assume it returns the same structure as initial generation
+                        };
+                        // Actually, let's look at how initial data is set:
+                        // world: { worldSetting: meta.worldSettings }
+                        // So we need to wrap it if resultData is the settings
+                        if (resultData.worldSettings) {
+                            newState.world = { worldSetting: resultData.worldSettings };
+                        } else {
+                            // Fallback if structure is different
+                            newState.world = { worldSetting: resultData };
+                        }
+                    } else if (section === "outline") {
+                        newState.outline = {
+                            overallOutline: resultData.overallOutline || resultData.outline, // Handle both naming conventions
+                            opening: resultData.opening,
+                            climax: resultData.climax,
+                            ending: resultData.ending,
+                            plotPoints: resultData.plotPoints,
+                            estimatedChapters: resultData.estimatedChapters
+                        };
+                    }
+
+                    return newState;
+                });
+
+                toast({ title: "重新生成成功", description: `${section} 内容已更新` });
+            }
+        } catch (error: any) {
+            console.error("Regeneration error:", error);
+            toast({ title: "重新生成失败", description: error.message, variant: "destructive" });
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-background/95 backdrop-blur-sm">
             <div className="border-b bg-muted/20 px-6 py-3 flex-shrink-0 flex items-center justify-between">
@@ -442,6 +526,7 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
                                                     step={step}
                                                     data={stepResults[step] || {}}
                                                     onEdit={(newData) => setStepResults(prev => ({ ...prev, [step]: newData }))}
+                                                    onRegenerateSection={handleRegenerateSection}
                                                 />
                                             </TabsContent>
                                         ))}

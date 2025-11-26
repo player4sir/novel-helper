@@ -15,6 +15,7 @@ export enum Intent {
   SUMMARIZE = 'summarize',            // Summarization
   POLISH = 'polish',                  // Text polishing
   EXPAND = 'expand',                  // Content expansion
+  DIAGNOSE = 'diagnose',              // Narrative diagnosis
 }
 
 // Model tier classification
@@ -61,6 +62,7 @@ export class ModelRoutingService {
     [Intent.FINAL_PROSE]: ModelTier.QUALITY,
     [Intent.LOGIC_DECISION]: ModelTier.QUALITY,
     [Intent.POLISH]: ModelTier.QUALITY,
+    [Intent.DIAGNOSE]: ModelTier.QUALITY, // Diagnosis needs high reasoning
     [Intent.DRAFT]: ModelTier.COST,
     [Intent.GHOST_TEXT]: ModelTier.COST,
     [Intent.SUMMARIZE]: ModelTier.COST,

@@ -135,7 +135,7 @@ export class AutoCreationService {
             // Update job status
             await db
                 .update(autoCreationJobs)
-                .set({ stats: newStats, currentChapterId: null })
+                .set({ stats: newStats, currentChapterId: nextChapter.id })
                 .where(eq(autoCreationJobs.id, jobId));
 
             // 4. Generate Content

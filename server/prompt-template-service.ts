@@ -118,6 +118,12 @@ export class PromptTemplateService {
    * @param context - PromptContext with all necessary data
    * @returns AssembledPrompt with text and signature
    */
+  /**
+   * Assemble prompt from template and context
+   * @param template - PromptTemplate
+   * @param context - PromptContext with all necessary data
+   * @returns AssembledPrompt with text and signature
+   */
   assemblePrompt(template: PromptTemplate, context: PromptContext): AssembledPrompt {
     // Replace placeholders in template text
     let promptText = template.templateText;
@@ -141,12 +147,23 @@ export class PromptTemplateService {
       })
       .join('\n\n');
 
+    // Determine genre and descriptions
+    // @ts-ignore - genre might be passed in context but not in interface yet
+    const genre = context.genre || '奇幻';
+    const genreDescription = this.getGenreDescription(genre);
+    const genreInstructions = this.getGenreSpecificInstructions(genre);
+
     // Replace common placeholders
     const replacements: Record<string, string> = {
       '{project_id}': context.projectId,
       '{chapter_id}': context.chapterId,
       '{chapter_index}': String(context.chapterIndex),
-      '{beats}': context.beats.join('\n'),
+      // @ts-ignore
+      '{scene_index}': String((context.sceneIndex || 0) + 1),
+      // @ts-ignore
+      '{total_scenes}': String(context.totalScenes || 1),
+      '{beats}': context.beats.join('\n'), // Keep for backward compatibility
+      '{scene_purpose}': context.beats.join('\n'), // New semantic name
       '{estimated_words}': String(context.estimatedWords),
       '{min_words}': String(minWords),
       '{max_words}': String(maxWords),
@@ -154,11 +171,17 @@ export class PromptTemplateService {
       '{style_guidance}': context.styleGuidelines ? `叙事风格：${context.styleGuidelines}` : '',
       '{style_enforcement}': this.generateStyleEnforcement(context.styleGuidelines || ''),
       '{prev_compact_summary}': context.previousSummary || '（本章开始）',
-      '{required_characters_brief}': context.characters.map(c => `${c.name}: ${c.role}`).join(', '),
+      '{previous_content}': context.previousSummary || '（本章开始）', // New semantic name
+      '{required_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // Keep for backward compatibility
+      '{available_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // New semantic name
       '{character_info}': characterInfo,
-      '{project_summary}': '（项目背景信息）',
-      '{chapter_outline}': '（章节大纲）',
-      '{world_settings}': context.worldSettings || '（暂无特殊世界观设定，请基于常规设定创作）',
+      '{project_summary}': '', // Removed placeholder
+      '{chapter_outline}': '', // Removed placeholder
+      '{world_settings}': context.worldSettings || '（暂无特殊世界观设定）',
+      '{story_context}': context.storyContext || '',
+      '{genre}': genre,
+      '{genre_description}': genreDescription,
+      '{genre_specific_instructions}': genreInstructions,
     };
 
     // Apply replacements
@@ -266,57 +289,123 @@ export class PromptTemplateService {
   private getFallbackTemplate(templateId: string): PromptTemplate {
     console.warn(`[PromptTemplate] Using fallback template for ${templateId}`);
 
-    // Hardcoded fallback template
-    const fallbackText = `系统：你是专业网文大神助手，擅长创作高沉浸感、节奏紧凑的玄幻/都市/仙侠小说。你的目标是根据大纲产出极具画面感、代入感的章节正文。
+    // Improved v3.0 template with Algorithmic CoT and 3-layer architecture
+    const v2Text = `系统：你是顶级网文大神助手，擅长创作{genre_description}。
 
-输入信息：
-- 核心冲突：{project_summary}
-- 本章大纲：{beats}
-- 登场角色：{required_characters_brief}
-- 角色详情：{character_info}
-- 预估字数：{estimated_words}
-- 风格要求：{style_guidelines}
-- 世界观设定：
+═══════════════════════════════════════════
+## 【系统元信息】（内部规划，不要在正文中体现）
+═══════════════════════════════════════════
+
+- 场景编号：第 {scene_index}/{total_scenes} 场景
+- 场景创作目标：{scene_purpose}
+  ↑ 注意：这是为你提供的创作方向指引，不要在正文中标注场景编号或创作目标
+  
+- 预期字数范围：{min_words} - {max_words} 字
+
+═══════════════════════════════════════════
+## 【创作参考信息】（用于指导创作，选择性使用）
+═══════════════════════════════════════════
+
+**世界观设定**：
 {world_settings}
 
-- 故事背景（Story Context）：
+**本场景可用角色**（根据剧情需要选择性登场）:
+{available_characters_brief}
+
+**角色详细信息**（仅当角色需要登场时参考）:
+{character_info}
+
+**风格要求**：{style_guidelines}
+
+═══════════════════════════════════════════
+## 【故事衔接信息】（必须紧密衔接）
+═══════════════════════════════════════════
+
+**故事背景**（已发生的关键事件）:
 """
 {story_context}
 """
 
-- 上文结尾（Previous Content）：
+**上文结尾**（已经写完的内容，请直接从此处继续）:
 """
-{prev_compact_summary}
+{previous_content}
 """
 
-创作指令：
-1.  **严禁重复（CRITICAL）**：上述“上文结尾”是**已经写完**的内容。**绝对不要**重复、改写或总结这段文字。请直接从“上文结尾”的最后一个标点符号之后继续写下去。
-2.  **时间线推进**：必须紧接着上文的时间点继续推进剧情，**严禁时间回溯**。
-3.  **沉浸式描写**：拒绝流水账。多用感官描写（视觉、听觉、触觉）构建场景。
-4.  **深层视角**：紧贴POV角色（视点人物）的心理活动和感官体验，写出TA的所思所想，而非旁观者视角。
-5.  **节奏把控**：
-    *   动作戏/冲突：短句为主，动词精准，营造紧张感。
-    *   文戏/情感：铺垫氛围，细腻刻画微表情和潜台词。
-6.  **对话自然**：符合角色身份性格，避免“说明书式”对话。对话要有交锋、有潜台词。
-7.  **风格强化（CRITICAL）**：
+═══════════════════════════════════════════
+## 创作指令（CRITICAL）
+═══════════════════════════════════════════
+
+0. **深度思维链规划（Deep CoT）**：
+   在正式写作前，你**必须**先输出一个 \`<thinking>\` 标签块，进行以下推演：
+   - **场景类型分析**：本场景属于什么类型？（战斗/情感/悬疑/日常/过渡）
+   - **写作策略制定**：基于场景类型，决定使用什么句式节奏？（如：战斗用短句，情感用心理描写）
+   - **情感基调设定**：本场景的核心情绪是什么？（压抑/热血/温馨/诡异）
+   - **感官钩子设计**：设计至少3个具体的感官细节（视觉/听觉/嗅觉/触觉）。
+   - **节拍细化**：将"场景创作目标"拆解为具体的起承转合步骤。
+
+   *格式示例*：
+   \`<thinking>
+   类型：高强度战斗
+   策略：多用动词，少用形容词，短句为主，强调速度感。
+   基调：紧迫、生死一线
+   钩子：生锈铁剑的腥味、汗水滴入眼睛的刺痛、骨头断裂的脆响
+   规划：
+   1. 李凡遭遇偷袭，侧身闪避。
+   2. 反击受阻，陷入下风。
+   3. 发现破绽，一击必杀。
+   </thinking>\`
+
+{genre_specific_instructions}
+
+1.  **拒绝人物小传式出场（NO INFO DUMPING）**：
+    *   **严禁**在角色刚出场时一次性抛出大段外貌、性格、背景介绍。
+    *   **必须**通过动作、对话、神态细节来侧面展现角色特征。
+
+2.  **角色声纹锁（CHARACTER VOICE）**：
+    *   **拒绝同质化对话**：每个角色的说话方式必须符合其人设（性格、背景、地位）。
+    *   **区分度**：读者应能仅凭对话内容分辨出是谁在说话。
+    *   *示例*：粗鲁的壮汉不说文绉绉的长句，高冷的剑客不说废话。
+
+3.  **拒绝流水账（SHOW, DON'T TELL）**：
+    *   不要平铺直叙地交代剧情（"然后...接着..."）。
+    *   **必须**通过具体的场景描写、感官细节（视听嗅触）来呈现故事。
+
+4.  **强化冲突与悬念（HOOKS & CONFLICT）**：
+    *   场景中必须包含显性或隐性的冲突（人与人、人与环境、人与内心）。
+    *   在段落结尾适当留白或制造悬念，吸引读者往下读。
+
+5.  **自然流畅的过渡（SMOOTH TRANSITIONS）**：
+    *   场景切换时，利用环境变化、时间流逝或人物心理活动进行自然过渡。
+    *   **严禁**使用"花开两朵，各表一枝"、"镜头转到"等生硬的转场词。
+    *   **严禁**重复上文结尾的内容。请直接紧接上文继续创作。
+
+6.  **沉浸式视角（DEEP POV）**：
+    *   紧贴POV角色（视点人物）的感官和心理。
+    *   写出TA看到的、听到的、想到的，而不是作者看到的。
+
+7.  **风格强化**：
     *   **严格执行风格**：{style_enforcement}
     *   **风格关键词**：{style_guidelines}
-    *   请确保每一段落的描写、对话和氛围都符合上述风格要求。
+
 8.  **负面约束**：
-    *   不要出现“书接上回”、“上文提到”等说书人语气的连接词。
+    *   **严禁输出场景标记**：不要在正文中添加【场景X/X】、***等任何形式的场景分隔符或元数据标记。
+    *   **场景信息内部使用**：上述场景规划信息（如"场景目标"）仅用于指导创作方向，不要在正文中显式标注。
+    *   不要出现"书接上回"、"待续"等标记。
     *   不要在开头总结前情。
-    *   不要出现“待续”、“未完”等标记。
+    *   遇到未设定细节（如路人名、招式名），请自动生成符合世界观的名称。
 
 输出要求：
-- 直接输出正文，不要包含“好的”、“以下是正文”等废话。
-- 若大纲中有逻辑断层，请基于角色性格合理脑补衔接。
-- 遇到未设定细节（如路人名、招式名），请自动生成符合世界观的名称。`;
+- **必须先输出 <thinking>...</thinking> 规划块**。
+- 然后换行输出正文。
+- 正文不要包含任何前言后语。
+- **正文应如同完整小说章节**，多个场景间自然过渡，读者无需看到场景分界。
+- 确保字数在{min_words}到{max_words}之间。`;
 
     return {
       id: templateId,
-      name: 'Fallback Template (High Quality)',
-      version: '1.2',
-      templateText: fallbackText,
+      name: 'Fallback Template v3.0 (Algorithmic CoT)',
+      version: '3.0',
+      templateText: v2Text,
       components: [
         'project_id',
         'chapter_id',
@@ -376,6 +465,53 @@ export class PromptTemplateService {
     }
 
     return enforcement || "请严格遵循设定的风格基调进行创作。";
+  }
+
+  /**
+   * Generate genre-specific description for system prompt
+   */
+  private getGenreDescription(genre: string): string {
+    const genreMap: Record<string, string> = {
+      '玄幻': '高沉浸感、节奏紧凑、想象瑰丽的玄幻小说',
+      '都市': '节奏明快、贴近现实、代入感强的都市小说',
+      '仙侠': '气势恢宏、意境深远、充满东方韵味的仙侠小说',
+      '科幻': '逻辑严谨、设定硬核、充满科技感的科幻小说',
+      '悬疑': '逻辑缜密、线索清晰、悬念迭起的悬疑推理小说',
+      '历史': '历史厚重、考据严谨、笔触典雅的历史小说',
+      '言情': '情感细腻、心理描写深入、浪漫动人的言情小说',
+      '奇幻': '世界观宏大、魔法体系完整、冒险刺激的奇幻小说',
+      '武侠': '江湖气息浓郁、武功描写精彩、侠义精神的武侠小说',
+      '灵异': '氛围诡谲、悬念丛生、恐怖感强的灵异小说',
+      '游戏': '游戏设定完整、升级体系清晰、爽快刺激的游戏小说',
+      '同人': '还原度高、人设贴合、剧情创新的同人小说',
+    };
+
+    return genreMap[genre] || `充满想象力、引人入胜的${genre}小说`;
+  }
+
+  /**
+   * Generate genre-specific instructions
+   */
+  private getGenreSpecificInstructions(genre: string): string {
+    const instructionsMap: Record<string, string> = {
+      '科幻': `
+- **硬科幻约束**：确保技术设定符合科学逻辑，避免"玄学化"的科技描写。
+- **世界观一致性**：科技水平、社会结构需前后一致，不要出现修仙、灵力等玄幻元素。`,
+
+      '悬疑': `
+- **线索布置**：每个场景至少埋设1-2个推理线索，关键信息需自然展现。
+- **逻辑自洽**：案件推理过程必须符合逻辑，避免强行逆转或神秘主义解释。`,
+
+      '言情': `
+- **情感细腻**：注重人物内心活动和情感变化，多用心理描写和细节暗示。
+- **互动自然**：角色间的互动要有张力和化学反应，避免直白的"我喜欢你"式告白。`,
+
+      '历史': `
+- **语言考究**：使用符合时代特色的语言风格，避免现代网络用语。
+- **历史细节**：服饰、礼仪、称谓需符合史实，重大历史事件需尊重基本史实。`,
+    };
+
+    return instructionsMap[genre] || '';
   }
 }
 

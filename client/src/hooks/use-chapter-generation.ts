@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 export interface GenerationState {
     isGenerating: boolean;
+    isThinking: boolean;
     progress: number;
     step: string;
     message: string;
@@ -37,6 +38,7 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
 
     const [state, setState] = useState<GenerationState>({
         isGenerating: false,
+        isThinking: false,
         progress: 0,
         step: "idle",
         message: "",
@@ -61,6 +63,7 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
         // Reset state
         setState({
             isGenerating: true,
+            isThinking: false,
             progress: 0,
             step: "connecting",
             message: "正在连接生成服务...",
@@ -126,6 +129,22 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
                             if (options.onSceneStart) {
                                 options.onSceneStart(data.data.sceneIndex, data.data.totalScenes, data.data.scenePurpose);
                             }
+                            break;
+
+                        case "thinking_start":
+                            setState((prev) => ({
+                                ...prev,
+                                isThinking: true,
+                                message: data.data.message || "AI正在深度思考剧情走向..."
+                            }));
+                            break;
+
+                        case "thinking_end":
+                            setState((prev) => ({
+                                ...prev,
+                                isThinking: false,
+                                message: "思考完成，开始撰写..."
+                            }));
                             break;
 
                         case "scene_content_chunk":

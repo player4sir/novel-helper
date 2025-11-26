@@ -5,6 +5,7 @@ import { aiService } from "./ai-service";
 import { storage } from "./storage";
 import { extractJSON } from "./utils/json-extractor";
 import { z } from "zod";
+import { genreConfigService } from "./genre-config-service";
 import type { ProjectContext } from "./character-generator";
 
 // Types
@@ -171,7 +172,7 @@ export class WorldGenerator {
     const template = this.getGenreTemplate(genre);
 
     // Build prompt
-    const prompt = this.buildWorldPrompt(genre, template, context);
+    const prompt = this.buildWorldPrompt(genre, context, template);
 
     // Get AI model
     const models = await storage.getAIModels();
@@ -517,12 +518,11 @@ export class WorldGenerator {
   /**
    * Build world generation prompt
    */
-  private buildWorldPrompt(
-    genre: string,
-    template: WorldTemplate,
-    context: ProjectContext
-  ): string {
-    return `你是一位资深的小说世界观设计专家。请为以下${genre}类型小说设计一个完整的世界观设定。
+  private buildWorldPrompt(genre: string, context: ProjectContext, template: WorldTemplate): string {
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
+
+    return `你是一位资深的小说世界观设计专家，擅长创作${genreDescription}。请为以下${genre}类型小说设计一个完整的世界观设定。
 
 # 项目背景
 ${context.title ? `标题：${context.title}` : ""}
@@ -532,8 +532,18 @@ ${context.themeTags && context.themeTags.length > 0 ? `主题：${context.themeT
 ${context.worldRules && context.worldRules.length > 0 ? `世界规则：\n${context.worldRules.join("\n")}` : ""}
 ${(context as any).worldDirective ? `\n# 世界观指导原则\n${(context as any).worldDirective}\n` : ""}
 
+# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤推演：
+1. **类型适配**: 思考${genre}类型的核心世界观要素（如${template.requiredElements.join("、")}）。
+2. **规则构建**: 设计 3 条核心规则，确保它们能产生有趣的冲突。
+3. **势力平衡**: 构思主要势力，确保它们之间存在动态平衡或对抗。
+4. **逻辑自洽**: 检查力量体系和世界规则是否矛盾。
+
 # 类型特点
 ${template.commonRules.length > 0 ? `常见规则：\n${template.commonRules.map((r, i) => `${i + 1}. ${r}`).join("\n")}` : ""}
+
+${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
 
 # 设计要求
 请设计一个符合${genre}类型特点的世界观，包含以下内容：
@@ -578,7 +588,10 @@ ${template.optionalElements.includes("items") ? `
 ` : ""}
 
 # 输出格式
-请严格按照以下JSON格式输出（所有内容使用中文）：
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
+
+请严格按照以下JSON格式输出：
 
 {
   "genre": "${genre}",

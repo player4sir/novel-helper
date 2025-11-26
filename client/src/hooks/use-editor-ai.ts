@@ -13,7 +13,9 @@ export interface EditorAIRequest {
     instruction: string;
     selectedText?: string;
     cursorPosition?: number;
-    chapterContent: string;
+    chapterContent?: string; // Optional if preceding/following are provided
+    precedingText?: string;
+    followingText?: string;
     chapterId: string;
     projectId: string;
     styleProfileId?: string;

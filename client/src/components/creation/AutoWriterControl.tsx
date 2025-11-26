@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Play, Pause, Loader2, Settings2 } from "lucide-react";
+import { Play, Pause, Loader2, Settings2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
     Dialog,
     DialogContent,
@@ -39,6 +40,7 @@ interface AutoCreationJob {
         errors: number;
     };
     currentChapterId?: string;
+    currentChapterTitle?: string;
     lastError?: string;
 }
 
@@ -129,6 +131,7 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
     };
 
     const isActive = job?.status === "active";
+    const isError = job?.status === "error";
 
     return (
         <div className="h-full flex flex-col">
@@ -140,13 +143,17 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
                         </div>
                         <div className="flex flex-col">
                             <span className="text-sm font-medium">自动创作</span>
-                            <span className="text-[10px] text-muted-foreground">
-                                {isActive ? "正在运行中..." : "准备就绪"}
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                                {isActive && job?.currentChapterTitle
+                                    ? `正在生成: ${job.currentChapterTitle}`
+                                    : isActive
+                                        ? "正在运行中..."
+                                        : "准备就绪"}
                             </span>
                         </div>
                     </div>
                     {job?.status && (
-                        <Badge variant={isActive ? "default" : "secondary"} className="text-[10px] px-1.5 h-5 font-normal">
+                        <Badge variant={isActive ? "default" : "secondary"} className={cn("text-[10px] px-1.5 h-5 font-normal", isError && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}>
                             {isActive ? "运行中" : job.status === "paused" ? "已暂停" : job.status === "error" ? "出错" : "已完成"}
                         </Badge>
                     )}
@@ -169,7 +176,7 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
                             />
                         </div>
                         {job?.lastError && (
-                            <div className="mt-2 text-[10px] text-red-500 bg-red-50 p-1.5 rounded border border-red-100">
+                            <div className="mt-2 text-[10px] text-red-500 bg-red-50 p-1.5 rounded border border-red-100 break-all">
                                 错误: {job.lastError}
                             </div>
                         )}
@@ -194,9 +201,10 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
                             onClick={handleStart}
                             disabled={isLoading}
                             className="w-full"
+                            variant={isError ? "destructive" : "default"}
                         >
-                            <Play className="h-3.5 w-3.5 mr-1.5" />
-                            开始
+                            {isError ? <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
+                            {isError ? "重试" : "开始"}
                         </Button>
                     )}
 

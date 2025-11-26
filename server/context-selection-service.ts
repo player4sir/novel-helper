@@ -317,8 +317,8 @@ export class ContextSelectionService {
         text += `\n结束状态：${plotNodes.exitState}`;
       }
     } else if (chapter.content) {
-      // Fallback to content summary
-      text += `\n${chapter.content.substring(0, 200)}`;
+      // Fallback to content summary (Increased limit to 1000 chars)
+      text += `\n${chapter.content.substring(0, 1000)}`;
     }
 
     return text;
@@ -352,7 +352,18 @@ export class ContextSelectionService {
             context += `\n  结束状态：${plotNodes.exitState}`;
           }
         } else if (chapter.content) {
-          context += `\n  内容：${chapter.content.substring(0, 150)}`;
+          // Smart truncation for raw content
+          const content = chapter.content;
+          const limit = 1500; // Increased from 150
+
+          if (content.length <= limit) {
+            context += `\n  内容：${content}`;
+          } else {
+            // Keep start and end for better context
+            const start = content.substring(0, 750);
+            const end = content.substring(content.length - 750);
+            context += `\n  内容：${start}\n  ...\n  ${end}`;
+          }
         }
 
         return context;

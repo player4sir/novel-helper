@@ -26,6 +26,8 @@ import {
   formatCharacterGrowthContext,
   getRelevantWorldSettings,
 } from "./content-generation-helpers";
+import { genreConfigService } from "./genre-config-service";
+import { extractJSON } from "./utils/json-extractor";
 import crypto from "crypto";
 
 // ============================================================================
@@ -1150,11 +1152,15 @@ export class VolumeChapterGenerationService {
   ): Promise<PromptModule[]> {
     const modules: PromptModule[] = [];
 
+    const genreInstructions = project.genre ? genreConfigService.getGenreSpecificInstructions(project.genre) : "";
+    const genreDescription = project.genre ? genreConfigService.getGenreDescription(project.genre) : "";
+
     modules.push({
       id: "system-role",
       priority: "must-have",
-      content: "你是一位资深的网络小说大纲策划专家，擅长设计引人入胜的卷纲结构，精通情节递进和冲突设计。",
-      estimatedTokens: 35,
+      content: `你是一位资深的网络小说大纲策划专家，擅长设计引人入胜的卷纲结构，精通情节递进和冲突设计。
+${genreDescription ? `你精通${genreDescription}的创作规律。` : ""}`,
+      estimatedTokens: 60,
       compressible: false,
     });
 
@@ -1233,20 +1239,38 @@ ${worldContext}`,
 5. **conflictFocus**: 冲突焦点（本卷的主要冲突类型）
 6. **orderIndex**: 卷序号（从${startIndex}开始）
 
+${genreInstructions ? `## 类型特定要求\n${genreInstructions}\n` : ''}
+
 设计原则：
 - **连贯性**: 与前面的卷保持情节连贯，避免突兀
 - **递进性**: 冲突和张力要比前面的卷更强
 - **差异化**: 避免与已有卷重复，要有新的冲突和转折
 - **角色成长**: 考虑角色在前面卷中的经历和成长`,
-      estimatedTokens: 220,
+      estimatedTokens: 350,
       compressible: true,
+    });
+
+    // Thinking Process (Deep CoT)
+    modules.push({
+      id: "thinking-process",
+      priority: "important",
+      content: `# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤进行规划：
+1. **回顾前文**: 分析已有卷的走向和未解决的伏笔。
+2. **后续规划**: 规划接下来的 ${targetCount} 卷如何承接前文并推向高潮。
+3. **类型适配**: 确保后续发展符合${project.genre || "该类型"}的读者期待。
+
+请先输出 <thinking>...</thinking>，然后输出 JSON。`,
+      estimatedTokens: 300,
+      compressible: false,
     });
 
     modules.push({
       id: "output-format",
       priority: "important",
       content: `# 输出格式
-请严格按照JSON数组格式输出（不要包含markdown代码块标记）：
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON数组。**
 
 [
   {
@@ -1305,8 +1329,9 @@ ${worldContext}`,
       id: "system-role",
       priority: "must-have",
       content: `你是一位资深的网络小说大纲策划专家，擅长设计引人入胜的卷纲结构，精通情节递进和冲突设计。
-请确保设计符合项目的基调风格：${toneProfile}。`,
-      estimatedTokens: 50,
+请确保设计符合项目的基调风格：${toneProfile}。
+${project.genre ? `你精通${genreConfigService.getGenreDescription(project.genre)}的创作规律。` : ""}`,
+      estimatedTokens: 60,
       compressible: false,
     });
 
@@ -1369,6 +1394,8 @@ ${worldContext}`,
     });
 
     // Task requirements with detailed specifications
+    const genreInstructions = project.genre ? genreConfigService.getGenreSpecificInstructions(project.genre) : "";
+
     modules.push({
       id: "task-requirements",
       priority: "important",
@@ -1382,6 +1409,8 @@ ${worldContext}`,
 5. **conflictFocus**: 冲突焦点（本卷的主要冲突类型，请参考核心冲突列表）
 6. **orderIndex**: 卷序号（从0开始）
 
+${genreInstructions ? `## 类型特定要求\n${genreInstructions}\n` : ''}
+
 设计原则：
 - **基调一致**: 严格遵循"${toneProfile}"的基调风格
 - **递进性**: 卷与卷之间要有明确的递进关系，冲突逐步升级
@@ -1389,8 +1418,25 @@ ${worldContext}`,
 - **节拍张力**: 每个节拍要有明确的目标、冲突和结果
 - **角色成长**: 结合角色成长规划，体现主角在各卷中的转变
 - **节奏控制**: 符合网络小说的节奏感，避免拖沓或过于仓促`,
-      estimatedTokens: 250,
+      estimatedTokens: 350,
       compressible: true,
+    });
+
+    // Thinking Process (Deep CoT)
+    modules.push({
+      id: "thinking-process",
+      priority: "important",
+      content: `# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤进行规划：
+1. **宏观架构**: 规划整本书的起承转合，确定这 ${targetCount} 个卷在整体故事中的位置。
+2. **冲突升级**: 设计每一卷的核心冲突，确保一卷比一卷更激烈。
+3. **类型爽点**: 思考如何在每一卷中埋下符合${project.genre || "该类型"}的爽点和期待感。
+4. **伏笔回收**: 规划伏笔的埋设和回收节奏。
+
+请先输出 <thinking>...</thinking>，然后输出 JSON。`,
+      estimatedTokens: 300,
+      compressible: false,
     });
 
     // Output format with enhanced fields
@@ -1398,7 +1444,7 @@ ${worldContext}`,
       id: "output-format",
       priority: "important",
       content: `# 输出格式
-请严格按照JSON数组格式输出（不要包含markdown代码块标记）：
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON数组。**
 
 [
   {
@@ -1453,11 +1499,17 @@ ${worldContext}`,
   ): Promise<PromptModule[]> {
     const modules: PromptModule[] = [];
 
+    const project = await storage.getProject(projectId);
+    const genre = project?.genre || "通用";
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
+
     modules.push({
       id: "system-role",
       priority: "must-have",
-      content: "你是一位资深的网络小说章节策划专家，擅长设计紧凑有力的章节结构，精通节奏控制和钩子设计。",
-      estimatedTokens: 35,
+      content: `你是一位资深的网络小说章节策划专家，擅长设计紧凑有力的章节结构，精通节奏控制和钩子设计。
+${genreDescription ? `你精通${genreDescription}的创作规律。` : ""}`,
+      estimatedTokens: 60,
       compressible: false,
     });
 
@@ -1502,8 +1554,26 @@ ${characters.map(c => formatCharacterForScene(c)).join("\n\n")}`,
 - 如果是高潮阶段，重点在于核心冲突的爆发和解决。
 - 如果是收尾阶段，重点在于余波处理和下一卷的伏笔。
 
-请明确指出你当前正在处理卷纲中的哪一个或哪几个节拍。`,
-      estimatedTokens: 150,
+请明确指出你当前正在处理卷纲中的哪一个或哪几个节拍。
+
+${genreInstructions ? `## 类型特定要求\n${genreInstructions}\n` : ''}`,
+      estimatedTokens: 200,
+      compressible: false,
+    });
+
+    // Thinking Process (Deep CoT)
+    modules.push({
+      id: "thinking-process",
+      priority: "important",
+      content: `# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤进行规划：
+1. **进度分析**: 确认当前章节在整卷中的位置，决定是该铺垫、发展还是高潮。
+2. **承上启下**: 确保与上一章（${startIndex}章）的衔接自然。
+3. **钩子设计**: 为新章节设计吸引人的钩子。
+
+请先输出 <thinking>...</thinking>，然后输出 JSON。`,
+      estimatedTokens: 300,
       compressible: false,
     });
 
@@ -1606,6 +1676,9 @@ ${worldContext}`,
   /**
    * Build prompt modules for chapter generation with enhanced context
    */
+  /**
+   * Build prompt modules for chapter generation with enhanced context
+   */
   private async buildChapterPromptModules(
     projectId: string,
     volume: any,
@@ -1628,12 +1701,18 @@ ${worldContext}`,
     }
 
     // System role
+    const project = await storage.getProject(projectId);
+    const genre = project?.genre || "通用";
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
+
     modules.push({
       id: "system-role",
       priority: "must-have",
       content: `你是一位资深的网络小说章节策划专家，擅长设计紧凑有力的章节结构，精通节奏控制和钩子设计。
-请确保设计符合项目的基调风格：${toneProfile}。`,
-      estimatedTokens: 50,
+请确保设计符合项目的基调风格：${toneProfile}。
+${genreDescription ? `你精通${genreDescription}的创作规律。` : ""}`,
+      estimatedTokens: 60,
       compressible: false,
     });
 
@@ -1690,16 +1769,35 @@ ${worldContext} `,
 8. ** exitState **: 出场状态（章节结束时的情境，简短描述）
 9. ** orderIndex **: 章节序号（从0开始）
 
+${genreInstructions ? `## 类型特定要求\n${genreInstructions}\n` : ''}
+
 设计原则：
 - ** 基调一致 **: 严格遵循"${toneProfile}"的基调风格
-  - ** 节拍分解 **: 将卷的核心节拍合理分解到各章节中
-    - ** 钩子设计 **: 每章开头要有吸引力，结尾要留悬念或冲突
-      - ** 节奏控制 **: 紧凑有力，避免拖沓，每章推进主线
-        - ** 角色分配 **: 合理安排角色出场，避免角色过多或过少
-          - ** 状态追踪 **: 明确每章的入场和出场状态，确保连贯性
-            - ** 风险递进 **: 章与章之间要有风险递进或情感深化`,
+- ** 节拍分解 **: 将卷的核心节拍合理分解到各章节中
+- ** 钩子设计 **: 每章开头要有吸引力，结尾要留悬念或冲突
+- ** 节奏控制 **: 紧凑有力，避免拖沓，每章推进主线
+- ** 角色分配 **: 合理安排角色出场，避免角色过多或过少
+- ** 状态追踪 **: 明确每章的入场和出场状态，确保连贯性
+- ** 风险递进 **: 章与章之间要有风险递进或情感深化`,
       estimatedTokens: 250,
       compressible: true,
+    });
+
+    // Thinking Process (Deep CoT)
+    modules.push({
+      id: "thinking-process",
+      priority: "important",
+      content: `# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤进行规划：
+1. **节奏切分**: 分析卷核心节拍，将其合理切分到 ${targetCount} 个章节中。
+2. **钩子设计**: 为每一章设计一个强有力的钩子（Hook）和悬念（Cliffhanger）。
+3. **视角选择**: 确定每一章的最佳叙事视角（Focal Entity）。
+4. **连贯性检查**: 确保上一章的出口状态（Exit State）与下一章的入口状态（Entry State）自然衔接。
+
+请先输出 <thinking>...</thinking>，然后输出 JSON。`,
+      estimatedTokens: 300,
+      compressible: false,
     });
 
     // Output format with enhanced fields
@@ -1707,7 +1805,7 @@ ${worldContext} `,
       id: "output-format",
       priority: "important",
       content: `# 输出格式
-请严格按照JSON数组格式输出（不要包含markdown代码块标记）：
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON数组。**
 
 [
   {
@@ -1725,10 +1823,10 @@ ${worldContext} `,
 
 注意：
 - beats 中每个场景要具体描述，不要只写"开端"、"发展"等抽象词
-  - requiredEntities 必须从可用角色列表中选择
-    - focalEntities 是 requiredEntities 的子集，表示主要视角
-      - stakesDelta 要明确说明本章对主线的影响
-        - entryState 和 exitState 要简洁明确，便于后续场景生成时使用`,
+- requiredEntities 必须从可用角色列表中选择
+- focalEntities 是 requiredEntities 的子集，表示主要视角
+- stakesDelta 要明确说明本章对主线的影响
+- entryState 和 exitState 要简洁明确，便于后续场景生成时使用`,
       estimatedTokens: 180,
       compressible: true,
     });
@@ -1882,7 +1980,7 @@ ${worldContext} `,
             apiKey: primaryModel.apiKey || undefined,
             parameters: {
               temperature: 0.7,
-              maxTokens: 3000,
+              maxTokens: 4000,
             },
             responseFormat: "json",
           }),
@@ -1904,7 +2002,7 @@ ${worldContext} `,
               apiKey: fallbackModel.apiKey || undefined,
               parameters: {
                 temperature: 0.7,
-                maxTokens: 3000,
+                maxTokens: 4000,
               },
               responseFormat: "json",
             }),
@@ -1924,7 +2022,7 @@ ${worldContext} `,
         throw new Error("AI返回的章节数据为空或格式错误。可能原因：1) AI模型返回格式不正确 2) 超时导致响应不完整 3) 提示词需要优化");
       }
 
-      console.log(`[Chapter Generation] Successfully generated ${chapters.length} chapters for volume ${volumeIndex + 1}`);
+      console.log(`[Chapter Generation] Successfully generated ${chapters.length} chapters for volume ${volumeIndex + 1} `);
 
       const responseHash = this.hashContent(result.content);
       executionLogs.push({
@@ -2271,29 +2369,16 @@ ${worldContext} `,
    */
   private parseVolumeResponse(content: string, targetCount: number): VolumeOutline[] {
     try {
-      let jsonStr = content.trim();
+      // Use robust JSON extraction
+      const data = extractJSON(content);
 
-      // Remove markdown code blocks
-      jsonStr = jsonStr
-        .replace(/^```json\s */i, "")
-        .replace(/^```\s*/, "")
-        .replace(/```\s*$/, "");
-      jsonStr = jsonStr.trim();
-
-      // Try to extract JSON if wrapped in text
-      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
-
-      const data = JSON.parse(jsonStr);
       if (!Array.isArray(data)) {
         console.error("Volume response is not an array");
         return [];
       }
 
       const volumes = data
-        .filter((v) => {
+        .filter((v: any) => {
           // Validate required fields
           if (!v.title || !v.oneLiner || !Array.isArray(v.beats)) {
             console.warn("Volume missing required fields:", v);
@@ -2301,7 +2386,7 @@ ${worldContext} `,
           }
           return true;
         })
-        .map((v, index) => ({
+        .map((v: any, index: number) => ({
           title: v.title,
           oneLiner: v.oneLiner,
           beats: v.beats,
@@ -2325,53 +2410,24 @@ ${worldContext} `,
    */
   private parseChapterResponse(content: string, volumeIndex: number): ChapterOutline[] {
     try {
-      let jsonStr = content.trim();
+      // Use robust JSON extraction
+      const data = extractJSON(content);
 
-      // Remove markdown code blocks (支持多种格式)
-      jsonStr = jsonStr
-        .replace(/^```json\s*/i, "")
-        .replace(/^```javascript\s*/i, "")
-        .replace(/^```\s*/, "")
-        .replace(/```\s*$/g, "")
-        .trim();
-
-      // Remove any leading/trailing text before/after JSON
-      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      } else {
-        // Try to find JSON object array
-        const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-        if (objMatch) {
-          // Wrap single object in array
-          jsonStr = `[${objMatch[0]}]`;
-        }
-      }
-
-      // Clean up common JSON issues
-      jsonStr = jsonStr
-        .replace(/,\s*}/g, "}") // Remove trailing commas in objects
-        .replace(/,\s*\]/g, "]") // Remove trailing commas in arrays
-        .trim();
-
-      console.log("[Parse] Attempting to parse JSON, length:", jsonStr.length);
-
-      const data = JSON.parse(jsonStr);
       if (!Array.isArray(data)) {
-        console.error("[Parse] Response is not an array, wrapping in array");
-        return this.parseChapterResponse(`[${content}]`, volumeIndex);
+        console.error("[Parse] Response is not an array");
+        return [];
       }
 
       const chapters = data
-        .map((c, index) => {
+        .map((c: any, index: number) => {
           // Validate and provide defaults for required fields
           if (!c.title || typeof c.title !== 'string') {
-            console.warn(`[Parse] Chapter ${index} missing title, using default`);
-            c.title = `第${index + 1}章`;
+            console.warn(`[Parse] Chapter ${index} missing title, using default `);
+            c.title = `第${index + 1} 章`;
           }
 
           if (!c.oneLiner || typeof c.oneLiner !== 'string') {
-            console.warn(`[Parse] Chapter ${index} missing oneLiner, using default`);
+            console.warn(`[Parse] Chapter ${index} missing oneLiner, using default `);
             c.oneLiner = "章节概要";
           }
 
@@ -2400,7 +2456,7 @@ ${worldContext} `,
             volumeIndex,
           };
         })
-        .filter((c) => {
+        .filter((c: any) => {
           // Final validation: must have title and at least one beat
           if (!c.title || c.beats.length === 0) {
             console.warn("[Parse] Filtering out invalid chapter:", c.title);
@@ -2424,7 +2480,7 @@ ${worldContext} `,
   }
 
   private generateExecutionId(): string {
-    return `exec_${Date.now()}_${crypto.randomBytes(8).toString("hex")}`;
+    return `exec_${Date.now()}_${crypto.randomBytes(8).toString("hex")} `;
   }
 
   private hashContent(content: string): string {

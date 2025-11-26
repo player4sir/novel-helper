@@ -11,7 +11,9 @@ import {
   Lightbulb,
   Target,
   Zap,
+  Loader2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface QualityScore {
   completeness: number;
@@ -45,12 +47,16 @@ interface QualityDashboardProps {
   qualityScore?: QualityScore;
   innovationScore?: InnovationScore;
   issues?: QualityIssue[];
+  onApplySuggestion?: (issue: QualityIssue) => void;
+  isApplying?: boolean;
 }
 
 export function QualityDashboard({
   qualityScore,
   innovationScore,
   issues = [],
+  onApplySuggestion,
+  isApplying = false,
 }: QualityDashboardProps) {
   if (!qualityScore && !innovationScore) {
     return (
@@ -223,17 +229,32 @@ export function QualityDashboard({
               {issues
                 .filter((issue) => issue.severity === "high")
                 .map((issue, index) => (
-                  <IssueCard key={`high-${index}`} issue={issue} />
+                  <IssueCard
+                    key={`high-${index}`}
+                    issue={issue}
+                    onApply={onApplySuggestion}
+                    isApplying={isApplying}
+                  />
                 ))}
               {issues
                 .filter((issue) => issue.severity === "medium")
                 .map((issue, index) => (
-                  <IssueCard key={`medium-${index}`} issue={issue} />
+                  <IssueCard
+                    key={`medium-${index}`}
+                    issue={issue}
+                    onApply={onApplySuggestion}
+                    isApplying={isApplying}
+                  />
                 ))}
               {issues
                 .filter((issue) => issue.severity === "low")
                 .map((issue, index) => (
-                  <IssueCard key={`low-${index}`} issue={issue} />
+                  <IssueCard
+                    key={`low-${index}`}
+                    issue={issue}
+                    onApply={onApplySuggestion}
+                    isApplying={isApplying}
+                  />
                 ))}
             </>
           )}
@@ -242,7 +263,6 @@ export function QualityDashboard({
     </div>
   );
 }
-
 // Score Dimension Component
 function ScoreDimension({
   label,
@@ -277,8 +297,16 @@ function ScoreDimension({
   );
 }
 
-// Issue Card Component
-function IssueCard({ issue }: { issue: QualityIssue }) {
+// IssueCard Component
+function IssueCard({
+  issue,
+  onApply,
+  isApplying
+}: {
+  issue: QualityIssue;
+  onApply?: (issue: QualityIssue) => void;
+  isApplying?: boolean;
+}) {
   const severityConfig = {
     high: {
       variant: "destructive" as const,
@@ -308,10 +336,31 @@ function IssueCard({ issue }: { issue: QualityIssue }) {
       </AlertTitle>
       <AlertDescription>
         <p className="mb-2">{issue.description}</p>
-        <p className="text-sm">
+        <p className="text-sm mb-3">
           <strong>建议：</strong>
           {issue.suggestion}
         </p>
+        {onApply && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => onApply(issue)}
+            disabled={isApplying}
+          >
+            {isApplying ? (
+              <>
+                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                正在优化...
+              </>
+            ) : (
+              <>
+                <Zap className="mr-2 h-3 w-3" />
+                一键优化
+              </>
+            )}
+          </Button>
+        )}
       </AlertDescription>
     </Alert>
   );

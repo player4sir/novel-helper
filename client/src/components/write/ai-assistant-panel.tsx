@@ -101,12 +101,23 @@ export function AIAssistantPanel({
 
     const fullPrompt = selectedText ? `${prompt}\n\n选中的内容：\n${selectedText}` : prompt;
 
+    // Slice context for performance (Level 1 Working Memory optimization)
+    const cursor = selection ? selection.end : context.length;
+    const CONTEXT_WINDOW = 2000;
+    const start = Math.max(0, cursor - CONTEXT_WINDOW);
+    const end = Math.min(context.length, cursor + CONTEXT_WINDOW);
+
+    const precedingText = context.slice(start, cursor);
+    const followingText = context.slice(cursor, end);
+
     await processInstructionStream(
       {
         projectId,
         chapterId,
         instruction: fullPrompt,
-        chapterContent: context,
+        // chapterContent: context, // Optimization: Don't send full content
+        precedingText,
+        followingText,
         selectedText,
         cursorPosition: selection ? selection.end : 0,
         styleProfileId: selectedStyle === "none" ? undefined : selectedStyle,

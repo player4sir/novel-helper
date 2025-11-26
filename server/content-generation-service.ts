@@ -9,7 +9,7 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 
 export interface GenerationEvent {
-    type: "connected" | "progress" | "scenes_decomposed" | "scene_start" | "scene_content_chunk" | "scene_completed" | "scene_failed" | "completed" | "error";
+    type: "connected" | "progress" | "scenes_decomposed" | "scene_start" | "thinking_start" | "thinking_end" | "scene_content_chunk" | "scene_completed" | "scene_failed" | "completed" | "error";
     data?: any;
     error?: string;
 }
@@ -158,6 +158,7 @@ export class ContentGenerationService {
                         globalMemory: worldSettingSelection.globalSettings?.map(s => `${s.title}: ${s.content}`).join("\n") || "",
                         worldSettings: worldSettingSelection.contextText,
                         sceneFrame: scene,
+                        genre: contextData.genre,
                         projectSummary: mainOutline ? {
                             coreConflicts: (mainOutline.plotNodes as any)?.coreConflicts?.join("、") || "",
                             themeTags: (mainOutline.plotNodes as any)?.themeTags?.join("、") || "",
@@ -197,19 +198,117 @@ export class ContentGenerationService {
                     let result: any = null;
                     let sceneContent = "";
 
+                    let buffer = "";
+                    let isBuffering = true;
+                    const BUFFER_LIMIT = 2000; // Safety limit to prevent hanging
+
+                    // Emit thinking start event
+                    yield {
+                        type: "thinking_start",
+                        data: {
+                            sceneIndex: i,
+                            message: "AI正在深度思考剧情走向..."
+                        }
+                    };
+
                     for await (const chunk of stream) {
                         if (typeof chunk === 'string') {
-                            sceneContent += chunk;
-                            yield {
-                                type: "scene_content_chunk",
-                                data: {
-                                    sceneIndex: i,
-                                    chunk: chunk,
-                                    currentLength: sceneContent.length
+                            if (isBuffering) {
+                                buffer += chunk;
+
+                                // Check for end of thinking block
+                                const thinkingEndIndex = buffer.indexOf('</thinking>');
+                                if (thinkingEndIndex !== -1) {
+                                    // Found it! Strip it and everything before it
+                                    let cleanPart = buffer.slice(thinkingEndIndex + 11); // length of </thinking> is 11
+
+                                    // Also clean scene markers from this initial part
+                                    cleanPart = this.cleanSceneMarkers(cleanPart);
+
+                                    if (cleanPart) {
+                                        sceneContent += cleanPart;
+                                        yield {
+                                            type: "scene_content_chunk",
+                                            data: {
+                                                sceneIndex: i,
+                                                chunk: cleanPart,
+                                                currentLength: sceneContent.length
+                                            }
+                                        };
+                                    }
+                                    buffer = "";
+                                    isBuffering = false;
+                                } else if (buffer.length > BUFFER_LIMIT) {
+                                    // Too long, give up buffering to prevent hanging
+                                    // Try to clean what we have
+                                    let cleanPart = this.cleanSceneMarkers(buffer);
+
+                                    // Emit thinking end (timeout)
+                                    yield {
+                                        type: "thinking_end",
+                                        data: { sceneIndex: i }
+                                    };
+
+                                    if (cleanPart) {
+                                        sceneContent += cleanPart;
+                                        yield {
+                                            type: "scene_content_chunk",
+                                            data: {
+                                                sceneIndex: i,
+                                                chunk: cleanPart,
+                                                currentLength: sceneContent.length
+                                            }
+                                        };
+                                    }
+                                    buffer = "";
+                                    isBuffering = false;
                                 }
-                            };
+                                // Else: continue buffering
+                            } else {
+                                // Not buffering, pass through
+                                // Simple cleanup for chunks to catch stray markers
+                                let cleanChunk = chunk;
+                                cleanChunk = cleanChunk.replace(/【场景\s*\d+\/\d+[^】]*】/g, '');
+                                cleanChunk = cleanChunk.replace(/\*\*\*/g, '');
+
+                                if (cleanChunk) {
+                                    sceneContent += cleanChunk;
+                                    yield {
+                                        type: "scene_content_chunk",
+                                        data: {
+                                            sceneIndex: i,
+                                            chunk: cleanChunk,
+                                            currentLength: sceneContent.length
+                                        }
+                                    };
+                                }
+                            }
                         } else {
                             result = chunk;
+                        }
+                    }
+
+                    // Flush any remaining buffer if we finished without finding </thinking>
+                    if (isBuffering) {
+                        // Emit thinking end if we were still buffering
+                        yield {
+                            type: "thinking_end",
+                            data: { sceneIndex: i }
+                        };
+
+                        if (buffer.length > 0) {
+                            let cleanPart = this.cleanSceneMarkers(buffer);
+                            if (cleanPart) {
+                                sceneContent += cleanPart;
+                                yield {
+                                    type: "scene_content_chunk",
+                                    data: {
+                                        sceneIndex: i,
+                                        chunk: cleanPart,
+                                        currentLength: sceneContent.length
+                                    }
+                                };
+                            }
                         }
                     }
 
@@ -249,6 +348,9 @@ export class ContentGenerationService {
             // 5. Finalize
             // Update chapter content
             if (generatedContent) {
+                // Clean scene markers (fallback mechanism)
+                generatedContent = this.cleanSceneMarkers(generatedContent);
+
                 await storage.updateChapter(chapterId, {
                     content: generatedContent,
                     wordCount: generatedContent.length,
@@ -301,7 +403,8 @@ export class ContentGenerationService {
             worldSettings,
             outlines,
             mainOutline,
-            project
+            project,
+            genre: project?.genre || '奇幻',
         };
     }
 
@@ -315,7 +418,7 @@ export class ContentGenerationService {
     ): any[] {
         if (!allCharacters || allCharacters.length === 0) return [];
 
-        const MAX_CHARACTERS = 7;
+        const MAX_CHARACTERS = 5; // Reduced from 7 to keep focus
         const selectedIds = new Set<string>();
         const selectedCharacters: any[] = [];
 
@@ -325,7 +428,7 @@ export class ContentGenerationService {
             selectedCharacters.push({ ...char, _selectionReason: reason });
         };
 
-        // 1. Add characters from scene focal entities (Highest priority)
+        // 1. [Highest Priority] Scene focal entities
         if (sceneFrame.focalEntities && sceneFrame.focalEntities.length > 0) {
             for (const name of sceneFrame.focalEntities) {
                 const char = allCharacters.find(c => c.name === name);
@@ -333,16 +436,18 @@ export class ContentGenerationService {
             }
         }
 
-        // 2. Add characters from chapter required entities
-        if (chapterOutline?.plotNodes?.requiredEntities) {
-            for (const name of chapterOutline.plotNodes.requiredEntities) {
+        // 2. [Fallback] Only check chapter required entities if we have NO characters yet
+        // And limit to top 2 to avoid flooding
+        if (selectedCharacters.length === 0 && chapterOutline?.plotNodes?.requiredEntities) {
+            const topRequired = chapterOutline.plotNodes.requiredEntities.slice(0, 2);
+            for (const name of topRequired) {
                 const char = allCharacters.find(c => c.name === name);
-                if (char) addCharacter(char, "chapter_required");
+                if (char) addCharacter(char, "chapter_required_fallback");
             }
         }
 
-        // 3. Add protagonist(s) if not already included and we have space
-        if (selectedCharacters.length < MAX_CHARACTERS) {
+        // 3. [Low Priority] Protagonist: Only add if we have very few characters (< 2)
+        if (selectedCharacters.length < 2) {
             const protagonists = allCharacters.filter(c => c.role === 'protagonist');
             for (const char of protagonists) {
                 if (selectedCharacters.length >= MAX_CHARACTERS) break;
@@ -350,34 +455,34 @@ export class ContentGenerationService {
             }
         }
 
-        // 4. Fill remaining space with key supporting characters (if any)
-        // Sort by mention count or importance if available, otherwise just role
-        if (selectedCharacters.length < MAX_CHARACTERS) {
-            const supporting = allCharacters
-                .filter(c => c.role === 'supporting' && !selectedIds.has(c.id))
-                // Simple sort by name for stability, ideally would be importance
-                .sort((a, b) => (b.mentionCount || 0) - (a.mentionCount || 0));
+        // 4. [No Auto-Fill] Removed automatic filling of supporting characters
+        // to prevent "all characters appearing in first chapter" issue
 
-            for (const char of supporting) {
-                if (selectedCharacters.length >= MAX_CHARACTERS) break;
-                addCharacter(char, "supporting_fill");
-            }
-        }
-
-        // If we still have very few characters (e.g. < 2) and have more available, add them regardless of role
-        if (selectedCharacters.length < 2 && allCharacters.length > selectedCharacters.length) {
-            const others = allCharacters
-                .filter(c => !selectedIds.has(c.id))
-                .sort((a, b) => (b.mentionCount || 0) - (a.mentionCount || 0));
-
-            for (const char of others) {
-                if (selectedCharacters.length >= 3) break; // Just add a couple more
-                addCharacter(char, "fallback_fill");
-            }
-        }
-
-        console.log(`[Context] Filtered characters for scene ${sceneFrame.index}: ${selectedCharacters.map(c => c.name).join(', ')}`);
+        console.log(`[Context] Filtered characters for scene ${sceneFrame.index}: ${selectedCharacters.map(c => c.name).join(', ')} (${selectedCharacters.length} total)`);
         return selectedCharacters;
+    }
+
+    /**
+     * Clean scene markers and AI thinking blocks from generated content
+     */
+    private cleanSceneMarkers(content: string): string {
+        if (!content) return "";
+
+        let cleaned = content;
+
+        // 1. Remove <thinking> blocks (CoT)
+        cleaned = cleaned.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
+
+        // 2. Remove 【场景 X/X: ...】 markers
+        cleaned = cleaned.replace(/【场景\s*\d+\/\d+[^】]*】\s*/g, '');
+
+        // 3. Remove standalone separator lines (like ***)
+        cleaned = cleaned.replace(/^\s*\*{3,}\s*$/gm, '');
+
+        // 4. Remove other potential scene marker formats
+        cleaned = cleaned.replace(/\n\s*场景\s*\d+[：:][^\n]*\n/g, '\n');
+
+        return cleaned.trim();
     }
 
     /**

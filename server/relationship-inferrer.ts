@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { extractJSON } from "./utils/json-extractor";
 import { z } from "zod";
 import type { Character, ProjectContext } from "./character-generator";
+import { genreConfigService } from "./genre-config-service";
 
 // Types
 export type RelationType =
@@ -97,6 +98,7 @@ export class RelationshipInferrer {
     });
 
     // Parse and validate
+    // extractJSON handles <thinking> blocks automatically
     const rawJson = extractJSON(result.content);
     const parsed = RelationshipGraphSchema.safeParse(rawJson);
 
@@ -264,12 +266,16 @@ export class RelationshipInferrer {
     conflicts: string[],
     context: ProjectContext
   ): string {
-    return `你是一位资深的小说情节设计专家。请基于以下角色设定和故事冲突，推断角色之间的关系网络。
+    const genre = context.genre || "通用";
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
+
+    return `你是一位资深的小说情节设计专家，擅长构建${genreDescription}中错综复杂的人物关系。请基于以下角色设定和故事冲突，推断角色之间的关系网络。
 
 # 项目背景
 ${context.title ? `标题：${context.title}` : ""}
 ${context.premise ? `简介：${context.premise}` : ""}
-${context.genre ? `类型：${context.genre}` : ""}
+类型：${genre}
 
 # 核心冲突
 ${conflicts.length > 0 ? conflicts.map((c, i) => `${i + 1}. ${c}`).join("\n") : "暂无明确冲突"}
@@ -282,6 +288,16 @@ ${i + 1}. ${c.name}（${this.getRoleLabel(c.role)}）
    - 内心冲突：${c.innerConflict}
    - 隐藏目标：${c.hiddenGoal}
 `).join("\n")}
+
+${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ''}
+
+# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤进行推演：
+1. **阵营划分**: 根据角色的动机和立场，将角色划分为不同的利益集团。
+2. **冲突模拟**: 想象当核心冲突爆发时，哪些角色会站在对立面，哪些会结盟。
+3. **情感纽带**: 分析角色之间是否存在隐藏的情感纠葛（如：恩情、仇恨、嫉妒）。
+4. **类型适配**: 确保关系类型符合${genre}的特点（例如：仙侠中的"道侣"、权谋中的"政敌"）。
 
 # 任务
 请分析这些角色之间可能存在的关系，考虑以下因素：
@@ -301,7 +317,10 @@ ${i + 1}. ${c.name}（${this.getRoleLabel(c.role)}）
 - neutral（中立）：关系较弱或暂时中立
 
 # 输出格式
-请严格按照以下JSON格式输出（所有内容使用中文）：
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
+
+请严格按照以下JSON格式输出：
 
 {
   "relationships": [

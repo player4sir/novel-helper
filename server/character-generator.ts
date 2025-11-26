@@ -5,6 +5,7 @@ import { aiService } from "./ai-service";
 import { storage } from "./storage";
 import { extractJSON } from "./utils/json-extractor";
 import { z } from "zod";
+import { genreConfigService } from "./genre-config-service";
 
 // Types
 export type CharacterRole = "主角" | "配角" | "反派" | "群像";
@@ -87,7 +88,42 @@ export class CharacterGenerator {
         existingCharacters: characters,
       };
 
-      const character = await this.generateCharacter(updatedContext, role, options);
+      let character: Character | null = null;
+
+      // Retry up to 3 times if we get a duplicate name
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const candidate = await this.generateCharacter(updatedContext, role, options);
+
+          // Check for duplicates
+          const isDuplicate = characters.some(c => c.name === candidate.name) ||
+            (context.existingCharacters && context.existingCharacters.some(c => c.name === candidate.name));
+
+          if (!isDuplicate) {
+            character = candidate;
+            break;
+          }
+
+          console.warn(`[CharacterGenerator] Generated duplicate character name: ${candidate.name}. Retrying...`);
+        } catch (e) {
+          console.warn(`[CharacterGenerator] Error generating character attempt ${attempt}:`, e);
+        }
+      }
+
+      // If we still don't have a valid character (or kept getting duplicates), try one last time and force rename if needed
+      if (!character) {
+        try {
+          character = await this.generateCharacter(updatedContext, role, options);
+          // Force rename if duplicate
+          if (characters.some(c => c.name === character!.name)) {
+            character.name = `${character.name} (新)`;
+          }
+        } catch (e) {
+          console.error("[CharacterGenerator] Failed to generate character after retries", e);
+          continue; // Skip this character slot
+        }
+      }
+
       characters.push(character);
     }
 
@@ -317,7 +353,11 @@ export class CharacterGenerator {
 - 展现世界观的某一方面或特定群体的特征`
     };
 
-    return `你是一位资深的小说角色设计专家。请为以下小说创作一个${role}角色。
+    const genre = context.genre || "未指定";
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
+
+    return `你是一位资深的小说角色设计专家，擅长创作${genreDescription}。请为以下小说创作一个${role}角色。
 
 # 项目背景
 ${context.title ? `标题：${context.title}` : ""}
@@ -333,15 +373,31 @@ ${context.existingCharacters && context.existingCharacters.length > 0 ? `
 ${context.existingCharacters.map(c => `- ${c.name}（${c.role}）：${c.motivation}`).join("\n")}
 
 请确保新角色与已有角色形成互补或冲突关系。
+
+**CRITICAL NEGATIVE CONSTRAINT**:
+You must generate a completely **NEW** name.
+**DO NOT** use any of the following names: [${context.existingCharacters.map(c => c.name).join(", ")}]
+If you generate a name that is already in the list above, it will be considered a failure.
 ` : ""}
+
+# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤推演：
+1. **类型适配**: 思考${genre}类型中${role}的典型特征，以及如何做出新意。
+2. **关系构建**: 分析该角色在现有角色关系网中的位置，如何制造冲突或互补。
+3. **深度挖掘**: 设计一个核心的"内在冲突"（Inner Conflict）和"虚假信念"（False Belief）。
+4. **名字构思**: 构思 3 个符合背景的名字，选出最贴切的一个。
 
 # 角色要求
 ${roleGuidance[role]}
 
-# 输出格式
-**重要：必须输出纯JSON，不要有任何其他文字！**
+${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
 
-请严格按照以下JSON格式输出（所有内容使用中文）：
+# 输出格式
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
+
+请严格按照以下JSON格式输出：
 
 {
   "name": "角色名字",
@@ -359,16 +415,15 @@ ${roleGuidance[role]}
 **注意**：
 1. role字段必须是"${role}"
 2. 所有字符串值用双引号包裹
-3. 不要有注释
-4. 不要有尾随逗号
-5. 确保JSON格式完全正确
-6. **注意：如果字符串内部包含双引号，必须使用反斜杠转义（例如：\\"价值\\"）**
+3. 确保JSON格式完全正确
+4. **注意：如果字符串内部包含双引号，必须使用反斜杠转义（例如：\\"价值\\"）**
 
 **重要**：
 1. 所有内容必须使用纯正的中文
 2. 避免俗套设定（如：废材逆袭、家族被灭、天赋异禀等）
 3. 角色要有真实感和复杂性
-4. 内心冲突和隐藏目标要与核心动机形成张力`;
+4. 内心冲突和隐藏目标要与核心动机形成张力
+5. **再次强调：名字必须唯一，不能与已有角色重复**`;
   }
 
   /**

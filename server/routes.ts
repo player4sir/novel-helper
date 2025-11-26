@@ -198,16 +198,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // 3. Regenerate Current Step
+  // 3. Regenerate Current Step or Specific Step
   app.post("/api/creation/step/regenerate", async (req, res) => {
     try {
-      const { sessionId, options } = req.body;
+      const { sessionId, step, options } = req.body;
 
       if (!sessionId) {
         return res.status(400).json({ error: "Session ID is required" });
       }
 
-      const result = await creationOrchestrator.regenerateCurrentStep(sessionId, options);
+      let result;
+      if (step) {
+        result = await creationOrchestrator.regenerateStep(sessionId, step, options);
+      } else {
+        result = await creationOrchestrator.regenerateCurrentStep(sessionId, options);
+      }
+
       res.json({ success: true, result });
     } catch (error: any) {
       console.error("[API] Failed to regenerate step:", error);
@@ -1898,8 +1904,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         selectedText,
         cursorPosition,
         chapterContent,
+        precedingText,
+        followingText,
         chapterId,
         projectId,
+        styleProfileId,
       } = req.body;
 
       if (!projectId || !chapterId) {
@@ -1917,8 +1926,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         selectedText: selectedText || '',
         cursorPosition: cursorPosition || 0,
         chapterContent: chapterContent || '',
+        precedingText,
+        followingText,
         chapterId,
         projectId,
+        styleProfileId,
       });
 
       for await (const event of stream) {
@@ -1983,6 +1995,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: false,
         error: error.message,
       });
+    }
+  });
+
+  // Narrative Doctor Diagnosis
+  app.post("/api/editor/diagnose", async (req, res) => {
+    try {
+      const { editorAIService } = await import("./editor-ai-service");
+      const {
+        selectedText,
+        cursorPosition,
+        chapterContent,
+        chapterId,
+        projectId,
+      } = req.body;
+
+      if (!projectId || !chapterId) {
+        return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      const result = await editorAIService.diagnoseChapter({
+        instruction: "Diagnose Chapter", // Placeholder
+        selectedText: selectedText || '',
+        cursorPosition: cursorPosition || 0,
+        chapterContent: chapterContent || '',
+        chapterId,
+        projectId,
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Diagnosis] Error:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -2062,26 +2106,6 @@ ${ragResult.promptText}
         };
       }
 
-      res.json({
-        success: true,
-        coherence: coherenceData,
-        metadata: result.metadata,
-      });
-    } catch (error: any) {
-      console.error("[Coherence Check] Error:", error);
-      res.status(500).json({
-        success: false,
-        error: error.message,
-      });
-    }
-  });
-
-  // ========== END EDITOR AI ENDPOINTS ==========
-
-
-  // Cache management
-  app.post("/api/cache/cleanup", async (req, res) => {
-    try {
       const { semanticCacheService } = await import("./semantic-cache-service");
       const deleted = await semanticCacheService.cleanExpired();
       res.json({ success: true, deleted });
@@ -2780,6 +2804,14 @@ ${ragResult.promptText}
   app.get("/api/auto-creation/status/:projectId", async (req, res) => {
     try {
       const job = await autoCreationService.getJobStatus(req.params.projectId);
+
+      if (job && job.currentChapterId) {
+        const chapter = await storage.getChapter(job.currentChapterId);
+        if (chapter) {
+          (job as any).currentChapterTitle = chapter.title;
+        }
+      }
+
       res.json(job || null);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

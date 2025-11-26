@@ -69,6 +69,8 @@ export class EnhancedRAGService {
             timeWindow
         );
 
+        // BUGFIX: Exclude current chapter to prevent retrieving its old content
+        // This prevents AI from "restoring" deleted content when user clears chapter and regenerates
         const candidateChapters = await db
             .select()
             .from(chapters)
@@ -76,7 +78,8 @@ export class EnhancedRAGService {
                 and(
                     eq(chapters.projectId, params.projectId),
                     gte(chapters.orderIndex, timeWindowBounds.start),
-                    lte(chapters.orderIndex, timeWindowBounds.end)
+                    lte(chapters.orderIndex, timeWindowBounds.end),
+                    sql`${chapters.id} != ${params.currentChapterId}` // Exclude current chapter
                 )
             )
             .orderBy(chapters.orderIndex);

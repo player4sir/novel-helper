@@ -32,7 +32,7 @@ export default function Write() {
 
   const editorRef = useRef<EditorPanelHandle>(null);
 
-  const { startGeneration, stopGeneration, isGenerating } = useChapterGeneration({
+  const { startGeneration, stopGeneration, isGenerating, isThinking } = useChapterGeneration({
     onChunk: (chunk) => {
       if (editorRef.current) {
         editorRef.current.appendContent(chunk);
@@ -87,11 +87,7 @@ export default function Write() {
                 字
               </div>
               {(!selectedChapter.content || selectedChapter.content.length < 100) && (
-                <GenerateContentButton
-                  isGenerating={isGenerating}
-                  onGenerate={() => startGeneration(selectedProjectId, selectedChapter.id)}
-                  onStop={stopGeneration}
-                />
+                null
               )}
               <Button variant="ghost" size="sm" data-testid="button-save-chapter">
                 <Save className="h-4 w-4 mr-2" />
@@ -119,6 +115,16 @@ export default function Write() {
               ref={editorRef}
               project={selectedProject}
               chapter={selectedChapter}
+              bottomActions={
+                selectedChapter && selectedProjectId && (!selectedChapter.content || selectedChapter.content.length < 100) ? (
+                  <GenerateContentButton
+                    isGenerating={isGenerating}
+                    isThinking={isThinking}
+                    onGenerate={() => startGeneration(selectedProjectId, selectedChapter.id)}
+                    onStop={stopGeneration}
+                  />
+                ) : null
+              }
             />
 
             {/* Right: Panels */}

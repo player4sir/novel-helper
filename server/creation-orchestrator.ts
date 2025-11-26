@@ -18,6 +18,7 @@ import { extractJSON } from "./utils/json-extractor";
 import { db } from "./db";
 import { projects, outlines } from "@shared/schema";
 import type { Session } from "@shared/schema";
+import { genreConfigService } from "./genre-config-service";
 
 // Types
 export interface CreationResult {
@@ -289,13 +290,14 @@ export class CreationOrchestrator {
   }
 
   /**
-   * Regenerate current step with different parameters
+   * Regenerate a specific step
    */
-  async regenerateCurrentStep(
+  async regenerateStep(
     sessionId: SessionId,
+    step: CreationStep,
     options?: RegenerateOptions
   ): Promise<StepResult> {
-    console.log(`[Orchestrator] Regenerating current step for session ${sessionId}`);
+    console.log(`[Orchestrator] Regenerating step ${step} for session ${sessionId}`);
 
     // Get session
     const session = await sessionManager.getSession(sessionId);
@@ -303,7 +305,6 @@ export class CreationOrchestrator {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    const currentStep = session.currentStep as CreationStep;
     const seed = session.seed as ProjectSeed;
 
     // Add randomness to ensure different results
@@ -313,12 +314,12 @@ export class CreationOrchestrator {
       randomSeed: Date.now(), // Use timestamp as random seed
     };
 
-    console.log(`[Orchestrator] Regenerating step ${currentStep} with options:`, enhancedOptions);
+    console.log(`[Orchestrator] Regenerating step ${step} with options:`, enhancedOptions);
 
     // Execute step again with different parameters
     let stepResult: StepResult;
 
-    switch (currentStep) {
+    switch (step) {
       case "basic":
         stepResult = await this.executeBasicStep(seed, enhancedOptions);
         break;
@@ -335,13 +336,34 @@ export class CreationOrchestrator {
         stepResult = await this.executeFinalizeStep(seed, session, enhancedOptions);
         break;
       default:
-        throw new Error(`Unknown step: ${currentStep}`);
+        throw new Error(`Unknown step: ${step}`);
     }
 
     // Save regenerated result
-    await sessionManager.saveStepResult(sessionId, currentStep, stepResult);
+    await sessionManager.saveStepResult(sessionId, step, stepResult);
+
+    // Update session current step to the regenerated step? 
+    // Maybe not, we just want to update the data. 
+    // But if we regenerate "basic", subsequent steps might need to be invalidated or re-run?
+    // For now, let's assume the user just wants to update that specific section's data.
+    // However, for consistency, we might want to update the session's step results.
+    // The saveStepResult above does that.
 
     return stepResult;
+  }
+
+  /**
+   * Regenerate current step with different parameters
+   */
+  async regenerateCurrentStep(
+    sessionId: SessionId,
+    options?: RegenerateOptions
+  ): Promise<StepResult> {
+    const session = await sessionManager.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    return this.regenerateStep(sessionId, session.currentStep as CreationStep, options);
   }
 
   /**
@@ -1000,14 +1022,17 @@ export class CreationOrchestrator {
     // Build comprehensive context
     const characters = charactersData.characters || [];
     const worldSetting = worldData.worldSetting;
+    const genre = basicData.genre || seed.genre || "通用";
+    const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
+    const genreDescription = genreConfigService.getGenreDescription(genre);
 
     // Build prompt for outline generation
-    const prompt = `你是一位资深的小说大纲设计专家。请基于以下完整的项目信息，生成详细的故事大纲。
+    const prompt = `你是一位资深的小说大纲设计专家，擅长创作${genreDescription}。请基于以下完整的项目信息，生成详细的故事大纲。
 
 # 基础信息
 标题：${basicData.title || seed.titleSeed}
 简介：${basicData.premise || seed.premise || ""}
-类型：${basicData.genre || seed.genre || "通用"}
+类型：${genre}
 风格：${basicData.style || seed.style || "标准"}
 主题：${basicData.themeTags?.join("、") || ""}
 核心冲突：
@@ -1016,9 +1041,9 @@ ${basicData.coreConflicts?.map((c: string, i: number) => `${i + 1}. ${c}`).join(
 # 角色信息
 ${characters.map((c: any, i: number) => `
 ${i + 1}. ${c.name}（${c.role}）
-   - 动机：${c.motivation}
-   - 内心冲突：${c.innerConflict}
-   - 成长路径：${c.growthPath}
+ - 动机：${c.motivation}
+ - 内心冲突：${c.innerConflict}
+ - 成长路径：${c.growthPath}
 `).join("\n")}
 
 # 世界观设定
@@ -1030,6 +1055,14 @@ ${worldSetting.factions ? `主要势力：${worldSetting.factions.map((f: any) =
 ${worldSetting.rules?.map((r: any, i: number) => `${i + 1}. ${r.content}`).join("\n") || ""}
 ` : ""}
 
+# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤推演：
+1. **结构规划**: 根据${genre}类型的节奏特点，规划起承转合的比例。
+2. **冲突编织**: 将核心冲突（${basicData.coreConflicts?.[0] || "主要冲突"}）拆解为具体的事件链。
+3. **角色弧光**: 确保主要情节点能推动主角（${characters[0]?.name || "主角"}）的内心成长。
+4. **高潮设计**: 设计一个既符合逻辑又意料之外的高潮场景。
+
 # 任务
 请生成一个完整的故事大纲，包括：
 1. 总纲（整体故事走向，300-500字）
@@ -1039,23 +1072,28 @@ ${worldSetting.rules?.map((r: any, i: number) => `${i + 1}. ${r.content}`).join(
 5. 结局方向（故事如何收尾，100-200字）
 6. 预估章节数（根据故事体量合理评估）
 
+${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
+
 # 输出格式
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
+
 请严格按照以下JSON格式输出：
 
 {
-  "overallOutline": "总纲描述（300-500字）",
-  "opening": "开篇设定（100-200字）",
-  "plotPoints": [
-    {
-      "sequence": 1,
-      "title": "情节点标题",
-      "description": "情节点描述（100-200字）",
-      "involvedCharacters": ["角色名1", "角色名2"]
-    }
-  ],
-  "climax": "高潮设计（200-300字）",
-  "ending": "结局方向（100-200字）",
-  "estimatedChapters": 50
+"overallOutline": "总纲描述（300-500字）",
+"opening": "开篇设定（100-200字）",
+"plotPoints": [
+  {
+    "sequence": 1,
+    "title": "情节点标题",
+    "description": "情节点描述（100-200字）",
+    "involvedCharacters": ["角色名1", "角色名2"]
+  }
+],
+"climax": "高潮设计（200-300字）",
+"ending": "结局方向（100-200字）",
+"estimatedChapters": 50
 }
 
 **重要**：
@@ -1187,20 +1225,38 @@ ${worldSetting.rules?.map((r: any, i: number) => `${i + 1}. ${r.content}`).join(
 
     // 转换角色数据：Character -> EntitySummary
     const characters = charactersData.characters || [];
-    const mainEntities = characters.map((char: any) => ({
-      name: char.name,
-      role: char.role,
-      shortMotivation: char.motivation || char.shortMotivation || "",
-      personality: char.personality || "",
-      appearance: char.appearance || "",
-      background: char.background || "",
-      abilities: char.abilities || "",
-      // 保留扩展字段
-      motivation: char.motivation,
-      innerConflict: char.innerConflict,
-      hiddenGoal: char.hiddenGoal,
-      growthPath: char.growthPath,
-    }));
+    const uniqueNames = new Set<string>();
+    const mainEntities: any[] = [];
+
+    for (const char of characters) {
+      let name = char.name;
+
+      // Deduplication check
+      if (uniqueNames.has(name)) {
+        console.warn(`[Orchestrator] Found duplicate character name in merge: ${name}`);
+        let counter = 2;
+        while (uniqueNames.has(`${name} (${counter})`)) {
+          counter++;
+        }
+        name = `${name} (${counter})`;
+      }
+      uniqueNames.add(name);
+
+      mainEntities.push({
+        name: name, // Use potentially renamed name
+        role: char.role,
+        shortMotivation: char.motivation || char.shortMotivation || "",
+        personality: char.personality || "",
+        appearance: char.appearance || "",
+        background: char.background || "",
+        abilities: char.abilities || "",
+        // 保留扩展字段
+        motivation: char.motivation,
+        innerConflict: char.innerConflict,
+        hiddenGoal: char.hiddenGoal,
+        growthPath: char.growthPath,
+      });
+    }
 
     // Build comprehensive ProjectMeta
     const projectMeta: ProjectMeta = {

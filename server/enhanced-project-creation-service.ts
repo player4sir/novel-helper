@@ -444,13 +444,25 @@ export class EnhancedProjectCreationService {
     seed: ProjectSeed,
     options?: { modelId?: string; temperature?: number }
   ): Promise<Partial<ProjectMeta>> {
-    const prompt = `你是一位资深的小说策划专家。请基于以下创意种子，生成完整的基础项目信息和创作指导原则。
+    const genre = seed.genre || "未指定";
+    const genreInstructions = this.getGenreSpecificInstructions(genre);
+    const genreDescription = this.getGenreDescription(genre);
+
+    const prompt = `你是一位资深的小说策划专家，擅长创作${genreDescription}。请基于以下创意种子，生成完整的基础项目信息和创作指导原则。
 
 # 用户输入
 标题/创意：${seed.titleSeed}
 ${seed.premise ? `简介：${seed.premise}` : ""}
 类型：${seed.genre || "未指定（请根据创意推断）"}
 风格：${seed.style || "未指定（请根据创意推断）"}
+
+# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+请按以下步骤推演：
+1. **类型定位**: 分析用户指定的类型（${genre}），列出该类型的核心爽点和反套路方向。
+2. **创意发散**: 构思 3 个不同的切入点，评估其新颖度。
+3. **核心冲突**: 选定最佳方案，构建"两难困境"。
+4. **自我审视**: 检查逻辑漏洞。
 
 # 任务
 请生成以下内容：
@@ -463,7 +475,12 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
 7. **世界观指导原则**：简述世界的核心规则、力量体系基调和氛围（50-100字）。
 8. **角色设计指导原则**：简述主要角色的总体风格、关系网络基调和所需的典型原型（50-100字）。
 
+${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
+
 # 输出格式
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
+
 请严格按照以下JSON格式输出：
 
 {
@@ -535,13 +552,16 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
    */
   private buildPromptModules(seed: ProjectSeed): PromptModule[] {
     const modules: PromptModule[] = [];
+    const genre = seed.genre || "未指定";
+    const genreInstructions = this.getGenreSpecificInstructions(genre);
+    const genreDescription = this.getGenreDescription(genre);
 
     // System role (must-have)
     modules.push({
       id: "system-role",
       priority: "must-have",
-      content: "你是一位资深的网络小说策划专家，擅长创作各类网络小说的核心设定和世界观架构。请确保所有输出内容使用纯正的中文，不要使用英文词汇或拼音。",
-      estimatedTokens: 30,
+      content: `你是一位资深的网络小说策划专家，擅长创作${genreDescription}。请确保所有输出内容使用纯正的中文，不要使用英文词汇或拼音。`,
+      estimatedTokens: 40,
       compressible: false,
     });
 
@@ -568,8 +588,40 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
 - **核心冲突**: 聚焦于**两难困境**（Dilemma），即角色必须在两个同样重要或同样糟糕的选项中做选择，而不仅仅是简单的打斗。
 
 ## 避免单一化
-不要让故事流于表面。如果主角要复仇，请探讨复仇带来的空虚；如果主角要变强，请展示变强背后的代价。`,
-      estimatedTokens: 250,
+不要让故事流于表面。如果主角要复仇，请探讨复仇带来的空虚；如果主角要变强，请展示变强背后的代价。
+
+${genreInstructions ? `## 类型特定要求\n${genreInstructions}` : ''}`,
+      estimatedTokens: 350,
+      compressible: false,
+    });
+
+    // Thinking Process (Deep CoT - V3.0)
+    modules.push({
+      id: "thinking-process",
+      priority: "must-have",
+      content: `# 思考过程 (CRITICAL)
+在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
+
+请按以下步骤进行推演：
+1. **类型定位**: 分析用户指定的类型（${genre}），列出该类型的核心爽点、常见套路以及你打算如何**反套路**。
+2. **创意头脑风暴**: 基于种子信息，快速构思 3 个不同的故事走向，并评估其新颖度和张力。
+3. **核心冲突构建**: 选定一个最佳走向，设计一个核心的"两难困境"（Dilemma），确保主角无法轻易解决。
+4. **角色与世界观适配**: 
+   - 设计主角的"谎言"（False Belief）和"伤痕"（Ghost）。
+   - 确保世界观规则直接服务于核心冲突（例如：如果冲突是关于记忆，世界观里必须有关于记忆的特殊规则）。
+5. **自我审视**: 检查设定是否存在逻辑漏洞或过于老套，如有则修正。
+
+格式示例：
+<thinking>
+类型分析：...
+创意方案1：...
+创意方案2：...
+创意方案3：...
+选择方案：...
+核心冲突：...
+角色设计：...
+</thinking>`,
+      estimatedTokens: 300,
       compressible: false,
     });
 
@@ -611,7 +663,8 @@ ${seed.premise ? `简介：${seed.premise}` : ""}
       id: "output-format",
       priority: "important",
       content: `# 输出格式
-**重要：必须输出有效的JSON格式，所有内容使用中文，字段名使用英文。**
+**重要：请先输出 <thinking>...</thinking> 思考块，然后换行输出有效的JSON格式。**
+**JSON内容必须使用纯正中文，字段名使用英文。**
 
 严格按照以下JSON结构输出：
 
@@ -1698,6 +1751,53 @@ ${meta.keywords.join("、")} `;
 ${selectedExample.example}
 ---
 `;
+  }
+
+  /**
+   * Generate genre-specific description for system prompt
+   */
+  private getGenreDescription(genre: string): string {
+    const genreMap: Record<string, string> = {
+      '玄幻': '高沉浸感、节奏紧凑、想象瑰丽的玄幻小说',
+      '都市': '节奏明快、贴近现实、代入感强的都市小说',
+      '仙侠': '气势恢宏、意境深远、充满东方韵味的仙侠小说',
+      '科幻': '逻辑严谨、设定硬核、充满科技感的科幻小说',
+      '悬疑': '逻辑缜密、线索清晰、悬念迭起的悬疑推理小说',
+      '历史': '历史厚重、考据严谨、笔触典雅的历史小说',
+      '言情': '情感细腻、心理描写深入、浪漫动人的言情小说',
+      '奇幻': '世界观宏大、魔法体系完整、冒险刺激的奇幻小说',
+      '武侠': '江湖气息浓郁、武功描写精彩、侠义精神的武侠小说',
+      '灵异': '氛围诡谲、悬念丛生、恐怖感强的灵异小说',
+      '游戏': '游戏设定完整、升级体系清晰、爽快刺激的游戏小说',
+      '同人': '还原度高、人设贴合、剧情创新的同人小说',
+    };
+
+    return genreMap[genre] || `充满想象力、引人入胜的${genre}小说`;
+  }
+
+  /**
+   * Generate genre-specific instructions
+   */
+  private getGenreSpecificInstructions(genre: string): string {
+    const instructionsMap: Record<string, string> = {
+      '科幻': `
+- **硬科幻约束**：确保技术设定符合科学逻辑，避免"玄学化"的科技描写。
+- **世界观一致性**：科技水平、社会结构需前后一致，不要出现修仙、灵力等玄幻元素。`,
+
+      '悬疑': `
+- **线索布置**：每个场景至少埋设1-2个推理线索，关键信息需自然展现。
+- **逻辑自洽**：案件推理过程必须符合逻辑，避免强行逆转或神秘主义解释。`,
+
+      '言情': `
+- **情感细腻**：注重人物内心活动和情感变化，多用心理描写和细节暗示。
+- **互动自然**：角色间的互动要有张力和化学反应，避免直白的"我喜欢你"式告白。`,
+
+      '历史': `
+- **语言考究**：使用符合时代特色的语言风格，避免现代网络用语。
+- **历史细节**：服饰、礼仪、称谓需符合史实，重大历史事件需尊重基本史实。`,
+    };
+
+    return instructionsMap[genre] || '';
   }
 
   /**

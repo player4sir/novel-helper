@@ -12,6 +12,7 @@ interface StepResultDisplayProps {
   data: any;
   onEdit?: (editedData: any) => void;
   onRegenerate?: () => void;
+  onRegenerateSection?: (section: string) => Promise<void>;
   isRegenerating?: boolean;
 }
 
@@ -20,11 +21,18 @@ export function StepResultDisplay({
   data,
   onEdit,
   onRegenerate,
+  onRegenerateSection,
   isRegenerating = false,
 }: StepResultDisplayProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedData, setEditedData] = useState(data);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
+
+  // Update local state when prop data changes (e.g. after regeneration)
+  if (data !== editedData && !isEditing) {
+    setEditedData(data);
+  }
 
   const handleSave = () => {
     onEdit?.(editedData);
@@ -43,6 +51,16 @@ export function StepResultDisplay({
     }));
   };
 
+  const handleSectionRegenerate = async (section: string) => {
+    if (!onRegenerateSection) return;
+    setRegeneratingSection(section);
+    try {
+      await onRegenerateSection(section);
+    } finally {
+      setRegeneratingSection(null);
+    }
+  };
+
   return (
     <div className="w-full space-y-6">
       <div className="flex justify-between items-center pb-4 border-b border-border/40">
@@ -54,16 +72,30 @@ export function StepResultDisplay({
         </div>
         <div className="flex gap-2">
           {!isEditing && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditing(true)}
-              disabled={isRegenerating}
-              className="h-9 px-4 hover:bg-primary/5 hover:text-primary transition-colors"
-            >
-              <Edit className="mr-2 h-3.5 w-3.5" />
-              编辑内容
-            </Button>
+            <>
+              {onRegenerateSection && step !== "finalize" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleSectionRegenerate(step)}
+                  disabled={isRegenerating || !!regeneratingSection}
+                  className="h-9 px-4 hover:bg-primary/5 hover:text-primary transition-colors"
+                >
+                  <RefreshCw className={cn("mr-2 h-3.5 w-3.5", regeneratingSection === step && "animate-spin")} />
+                  {regeneratingSection === step ? "生成中..." : "重新生成"}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsEditing(true)}
+                disabled={isRegenerating || !!regeneratingSection}
+                className="h-9 px-4 hover:bg-primary/5 hover:text-primary transition-colors"
+              >
+                <Edit className="mr-2 h-3.5 w-3.5" />
+                编辑内容
+              </Button>
+            </>
           )}
           {isEditing && (
             <>

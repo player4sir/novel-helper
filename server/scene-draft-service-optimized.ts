@@ -21,6 +21,7 @@ export interface DraftContext {
   characters?: Character[] | any[]; // Allow both full Character type and partial character objects
   worldSettings?: string;
   globalMemory?: string; // Added global memory
+  genre?: string; // Added genre
   sceneFrame?: SceneFrame;
   projectSummary?: {
     coreConflicts: string;
@@ -108,7 +109,7 @@ export class SceneDraftServiceOptimized {
   private modelCacheTime: number = 0;
   private readonly MODEL_CACHE_TTL = 60000; // Cache model config for 60 seconds
   // Use the existing template ID from database
-  private readonly CHAPTER_DRAFT_TEMPLATE_ID = 'pt_chapter_draft_v1';
+  private readonly CHAPTER_DRAFT_TEMPLATE_ID = 'pt_chapter_draft_v2';
 
   // Chapter-level component cache (reused across scenes in same chapter)
   private chapterComponentCache: Map<string, {
@@ -693,9 +694,12 @@ export class SceneDraftServiceOptimized {
       projectId,
       chapterId: sceneFrame.chapterId,
       chapterIndex: context.currentScene?.index || 0,
+      sceneIndex: context.currentScene?.index || 0,
+      totalScenes: context.currentScene?.total || 1,
       beats: [sceneFrame.purpose],
       characters: context.characters || [],
       estimatedWords: this.SCENE_TARGET_WORDS,
+      genre: context.genre || '奇幻',
       styleGuidelines: context.projectSummary?.toneProfile || '',
       previousSummary: context.previousContent || '', // Use full content passed from service
       storyContext: context.storyContext || '', // Pass story context
