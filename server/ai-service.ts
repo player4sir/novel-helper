@@ -1,5 +1,6 @@
 // AI Service for handling multiple providers (OpenAI compatible)
 // Reference: javascript_openai and javascript_anthropic blueprints
+import { aiContext } from "./ai-context";
 
 interface AIGenerateRequest {
   prompt: string;
@@ -53,19 +54,31 @@ export class AIService {
     const { provider, modelType, modelId, baseUrl, apiKey } = request;
     const startTime = Date.now();
 
+    const contextConfig = aiContext.getStore();
+
+    let effectiveApiKey = apiKey;
+    let effectiveBaseUrl = baseUrl;
+    let effectiveModelId = modelId;
+    let effectiveProvider = provider;
+
+    // For testConnection, we rely on the request parameters. 
+    // We do NOT use contextConfig here because we might be testing a model 
+    // that is different from the currently active one (context).
+    // The client sends all necessary details in the request body.
+
     // 验证必填参数
-    if (!baseUrl) {
+    if (!effectiveBaseUrl) {
       return {
         success: false,
         error: "API 地址不能为空",
       };
     }
 
-    let effectiveApiKey = apiKey || this.getDefaultApiKey(provider);
+    effectiveApiKey = effectiveApiKey || this.getDefaultApiKey(effectiveProvider);
     if (!effectiveApiKey) {
       return {
         success: false,
-        error: `未配置 ${provider} 的 API Key，请在模型配置或环境变量中设置`,
+        error: `未配置 ${effectiveProvider} 的 API Key，请在模型配置或环境变量中设置`,
       };
     }
 
@@ -77,13 +90,13 @@ export class AIService {
 
       const testPromise = (async () => {
         if (modelType === "chat") {
-          if (provider === "anthropic") {
-            await this.testAnthropicConnection(modelId, baseUrl, effectiveApiKey);
+          if (effectiveProvider === "anthropic") {
+            await this.testAnthropicConnection(effectiveModelId, effectiveBaseUrl, effectiveApiKey);
           } else {
-            await this.testOpenAICompatibleConnection(modelId, baseUrl, effectiveApiKey);
+            await this.testOpenAICompatibleConnection(effectiveModelId, effectiveBaseUrl, effectiveApiKey);
           }
         } else if (modelType === "embedding") {
-          await this.testEmbeddingConnection(modelId, baseUrl, effectiveApiKey, provider);
+          await this.testEmbeddingConnection(effectiveModelId, effectiveBaseUrl, effectiveApiKey, effectiveProvider);
         } else {
           throw new Error(`不支持的模型类型: ${modelType}`);
         }
@@ -247,24 +260,45 @@ export class AIService {
   async generate(request: AIGenerateRequest): Promise<AIGenerateResponse> {
     const { prompt, modelId, provider, baseUrl, apiKey, parameters, responseFormat } = request;
 
-    let effectiveApiKey = apiKey || this.getDefaultApiKey(provider);
+    const contextConfig = aiContext.getStore();
+
+    // If context exists and matches the request (or if we want to force override), use it
+    // Note: We might want to be selective about when to override. 
+    // For now, if context exists, it takes precedence for the configured provider/model.
+
+    let effectiveApiKey = apiKey;
+    let effectiveBaseUrl = baseUrl;
+    let effectiveModelId = modelId;
+    let effectiveProvider = provider;
+
+    if (contextConfig) {
+      // If the request is using the "custom" or default provider, or if we just want to force the local config
+      // We assume if x-ai-config is present, the user INTENDS to use it.
+      effectiveApiKey = contextConfig.apiKey;
+      effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
+      effectiveModelId = contextConfig.modelId;
+      effectiveProvider = contextConfig.provider;
+    }
+
+    effectiveApiKey = effectiveApiKey || this.getDefaultApiKey(effectiveProvider);
+
     if (!effectiveApiKey) {
-      throw new Error(`No API key available for provider: ${provider}`);
+      throw new Error(`No API key available for provider: ${effectiveProvider}`);
     }
 
     try {
-      if (provider === "anthropic") {
+      if (effectiveProvider === "anthropic") {
         return await this.generateAnthropic(
-          modelId,
-          baseUrl,
+          effectiveModelId,
+          effectiveBaseUrl,
           effectiveApiKey,
           prompt,
           parameters
         );
       } else {
         return await this.generateOpenAICompatible(
-          modelId,
-          baseUrl,
+          effectiveModelId,
+          effectiveBaseUrl,
           effectiveApiKey,
           prompt,
           parameters,
@@ -366,24 +400,39 @@ export class AIService {
   async *generateStream(request: AIGenerateRequest): AsyncGenerator<string, void, unknown> {
     const { prompt, modelId, provider, baseUrl, apiKey, parameters } = request;
 
-    let effectiveApiKey = apiKey || this.getDefaultApiKey(provider);
+    const contextConfig = aiContext.getStore();
+
+    let effectiveApiKey = apiKey;
+    let effectiveBaseUrl = baseUrl;
+    let effectiveModelId = modelId;
+    let effectiveProvider = provider;
+
+    if (contextConfig) {
+      effectiveApiKey = contextConfig.apiKey;
+      effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
+      effectiveModelId = contextConfig.modelId;
+      effectiveProvider = contextConfig.provider;
+    }
+
+    effectiveApiKey = effectiveApiKey || this.getDefaultApiKey(effectiveProvider);
+
     if (!effectiveApiKey) {
-      throw new Error(`No API key available for provider: ${provider}`);
+      throw new Error(`No API key available for provider: ${effectiveProvider}`);
     }
 
     try {
-      if (provider === "anthropic") {
+      if (effectiveProvider === "anthropic") {
         yield* this.generateAnthropicStream(
-          modelId,
-          baseUrl,
+          effectiveModelId,
+          effectiveBaseUrl,
           effectiveApiKey,
           prompt,
           parameters
         );
       } else {
         yield* this.generateOpenAICompatibleStream(
-          modelId,
-          baseUrl,
+          effectiveModelId,
+          effectiveBaseUrl,
           effectiveApiKey,
           prompt,
           parameters

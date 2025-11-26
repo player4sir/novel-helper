@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Sparkles, Trash2, Check, Settings, Zap, Edit2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -27,71 +27,78 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { apiRequest } from "@/lib/queryClient";
-import { insertAIModelSchema, type AIModel } from "@shared/schema";
+import { type AIModel } from "@shared/schema";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  getLocalAIModels,
+  addLocalAIModel,
+  deleteLocalAIModel,
+  setActiveLocalModelId,
+  getActiveLocalModelId,
+  type LocalAIModel
+} from "@/lib/ai-config";
 
 const providers = [
-  { 
-    value: "deepseek", 
-    label: "DeepSeek", 
+  {
+    value: "deepseek",
+    label: "DeepSeek",
     defaultUrl: "https://api.deepseek.com/v1",
     defaultChatModel: "deepseek-chat",
     defaultEmbeddingModel: "deepseek-embedding"
   },
-  { 
-    value: "openai", 
-    label: "OpenAI", 
+  {
+    value: "openai",
+    label: "OpenAI",
     defaultUrl: "https://api.openai.com/v1",
     defaultChatModel: "gpt-4o",
     defaultEmbeddingModel: "text-embedding-3-large"
   },
-  { 
-    value: "anthropic", 
-    label: "Anthropic", 
+  {
+    value: "anthropic",
+    label: "Anthropic",
     defaultUrl: "https://api.anthropic.com/v1",
     defaultChatModel: "claude-3-5-sonnet-20241022",
     defaultEmbeddingModel: ""
   },
-  { 
-    value: "zhipu", 
-    label: "智谱AI", 
+  {
+    value: "zhipu",
+    label: "智谱AI",
     defaultUrl: "https://open.bigmodel.cn/api/paas/v4",
     defaultChatModel: "glm-4-plus",
     defaultEmbeddingModel: "embedding-3"
   },
-  { 
-    value: "qwen", 
-    label: "通义千问", 
+  {
+    value: "qwen",
+    label: "通义千问",
     defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     defaultChatModel: "qwen-max",
     defaultEmbeddingModel: "text-embedding-v3"
   },
-  { 
-    value: "moonshot", 
-    label: "月之暗面", 
+  {
+    value: "moonshot",
+    label: "月之暗面",
     defaultUrl: "https://api.moonshot.cn/v1",
     defaultChatModel: "moonshot-v1-8k",
     defaultEmbeddingModel: ""
   },
-  { 
-    value: "baichuan", 
-    label: "百川智能", 
+  {
+    value: "baichuan",
+    label: "百川智能",
     defaultUrl: "https://api.baichuan-ai.com/v1",
     defaultChatModel: "Baichuan4",
     defaultEmbeddingModel: "Baichuan-Text-Embedding"
   },
-  { 
-    value: "siliconflow", 
-    label: "硅基流动", 
+  {
+    value: "siliconflow",
+    label: "硅基流动",
     defaultUrl: "https://api.siliconflow.cn/v1",
     defaultChatModel: "deepseek-ai/DeepSeek-V3",
     defaultEmbeddingModel: "BAAI/bge-large-zh-v1.5"
   },
-  { 
-    value: "custom", 
-    label: "自定义", 
+  {
+    value: "custom",
+    label: "自定义",
     defaultUrl: "",
     defaultChatModel: "",
     defaultEmbeddingModel: ""
@@ -124,9 +131,21 @@ export default function AIModels() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"chat" | "embedding">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "embedding" | "local">("chat");
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
   const [togglingModelId, setTogglingModelId] = useState<string | null>(null);
+  const [storageType, setStorageType] = useState<"server" | "local">("server");
+  const [localModels, setLocalModels] = useState<LocalAIModel[]>([]);
+  const [activeLocalModelId, setActiveLocalModelIdState] = useState<string | null>(null);
+
+  useEffect(() => {
+    refreshLocalModels();
+  }, []);
+
+  const refreshLocalModels = () => {
+    setLocalModels(getLocalAIModels());
+    setActiveLocalModelIdState(getActiveLocalModelId());
+  };
 
   const getModelParams = (params: unknown): ModelParams => {
     if (!params || typeof params !== 'object') {
@@ -245,7 +264,8 @@ export default function AIModels() {
   });
 
   const testConnectionMutation = useMutation({
-    mutationFn: async (model: AIModel) => {
+    mutationFn: async (model: AIModel | LocalAIModel) => {
+      setTestingModelId(model.id);
       const response = await apiRequest("POST", "/api/ai-models/test", {
         provider: model.provider,
         modelType: model.modelType,
@@ -255,8 +275,7 @@ export default function AIModels() {
       });
       return await response.json();
     },
-    onSuccess: (data: any, model: AIModel) => {
-      console.log("Test connection response:", data);
+    onSuccess: (data: any) => {
       if (data.success) {
         toast({
           title: "连接成功",
@@ -272,7 +291,6 @@ export default function AIModels() {
       setTestingModelId(null);
     },
     onError: (error: any) => {
-      console.error("Test connection error:", error);
       toast({
         title: "测试失败",
         description: error.message || "网络错误",
@@ -283,7 +301,25 @@ export default function AIModels() {
   });
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
-    createModelMutation.mutate(values);
+    if (storageType === "local") {
+      const newModel: LocalAIModel = {
+        id: editingModel?.id || crypto.randomUUID(),
+        ...values,
+        apiKey: values.apiKey || undefined,
+        baseUrl: values.baseUrl || undefined,
+        dimension: values.dimension || undefined,
+      };
+      addLocalAIModel(newModel);
+      refreshLocalModels();
+      setDialogOpen(false);
+      setEditingModel(null);
+      toast({
+        title: editingModel ? "本地模型已更新" : "本地模型已添加",
+        description: "配置已保存到浏览器本地存储",
+      });
+    } else {
+      createModelMutation.mutate(values);
+    }
   };
 
   const handleProviderChange = (provider: string) => {
@@ -309,8 +345,17 @@ export default function AIModels() {
     }
   };
 
-  const handleEdit = (model: AIModel) => {
-    setEditingModel(model);
+  const handleEdit = (model: AIModel | LocalAIModel) => {
+    // Check if it's a local model by checking for 'createdAt' property which exists on AIModel but not LocalAIModel
+    // Or we can just check if it exists in localModels
+    const isLocal = !('createdAt' in model);
+    setStorageType(isLocal ? "local" : "server");
+
+    // Cast to AIModel for compatibility with setEditingModel, 
+    // but we know it might be LocalAIModel. 
+    // The id field is compatible.
+    setEditingModel(model as AIModel);
+
     const params = getModelParams(model.defaultParams);
     form.reset({
       name: model.name,
@@ -328,12 +373,7 @@ export default function AIModels() {
     setDialogOpen(true);
   };
 
-  const handleTestConnection = (model: AIModel) => {
-    setTestingModelId(model.id);
-    testConnectionMutation.mutate(model);
-  };
-
-  const renderModelCard = (model: AIModel) => {
+  const renderModelCard = (model: AIModel | LocalAIModel) => {
     const params = getModelParams(model.defaultParams);
     const providerLabel = providers.find(p => p.value === model.provider)?.label || model.provider;
     const isDefault = model.modelType === "chat" ? model.isDefaultChat : model.isDefaultEmbedding;
@@ -341,8 +381,12 @@ export default function AIModels() {
     const isToggling = togglingModelId === model.id;
     const isTesting = testingModelId === model.id;
 
+    // Local model specific logic
+    const isLocal = !('createdAt' in model);
+    const isActiveLocal = isLocal && activeLocalModelId === model.id;
+
     return (
-      <Card key={model.id} className={`group hover:shadow-md transition-shadow ${!model.isActive ? "opacity-60" : ""} ${isDeleting ? "opacity-50 pointer-events-none" : ""}`}>
+      <Card key={model.id} className={`group hover:shadow-md transition-shadow ${!model.isActive ? "opacity-60" : ""} ${isDeleting ? "opacity-50 pointer-events-none" : ""} ${isActiveLocal ? "border-primary ring-1 ring-primary" : ""}`}>
         <CardHeader className="pb-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
@@ -359,10 +403,20 @@ export default function AIModels() {
                 <Badge variant={model.modelType === "chat" ? "default" : "secondary"} className="text-xs">
                   {model.modelType === "chat" ? "对话" : "向量"}
                 </Badge>
-                {isDefault && (
+                {isDefault && !isLocal && (
                   <Badge variant="default" className="text-xs bg-green-500 hover:bg-green-600">
                     <Check className="h-3 w-3 mr-1" />
                     默认
+                  </Badge>
+                )}
+                {isLocal && (
+                  <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-800 hover:bg-blue-200">
+                    本地
+                  </Badge>
+                )}
+                {isActiveLocal && (
+                  <Badge variant="default" className="text-xs bg-primary hover:bg-primary/90">
+                    当前启用
                   </Badge>
                 )}
               </div>
@@ -381,7 +435,17 @@ export default function AIModels() {
                 size="icon"
                 variant="ghost"
                 className="h-8 w-8 hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => deleteModelMutation.mutate(model.id)}
+                onClick={() => {
+                  if (isLocal) {
+                    if (confirm("确定要删除这个本地配置吗？")) {
+                      deleteLocalAIModel(model.id);
+                      refreshLocalModels();
+                      toast({ title: "已删除", description: "本地模型配置已移除" });
+                    }
+                  } else {
+                    deleteModelMutation.mutate(model.id);
+                  }
+                }}
                 disabled={isDeleting || isTesting}
               >
                 {isDeleting ? (
@@ -393,7 +457,7 @@ export default function AIModels() {
             </div>
           </div>
         </CardHeader>
-        
+
         <CardContent className="space-y-3 pt-0">
           <div className="text-xs text-muted-foreground font-mono truncate bg-muted/50 px-2 py-1.5 rounded">
             {model.modelId}
@@ -430,16 +494,22 @@ export default function AIModels() {
               {isToggling && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
               <Switch
                 checked={model.isActive ?? true}
-                onCheckedChange={(checked) =>
-                  toggleActiveMutation.mutate({ id: model.id, isActive: checked })
-                }
+                onCheckedChange={(checked) => {
+                  if (isLocal) {
+                    const updated = { ...model, isActive: checked } as LocalAIModel;
+                    addLocalAIModel(updated);
+                    refreshLocalModels();
+                  } else {
+                    toggleActiveMutation.mutate({ id: model.id, isActive: checked });
+                  }
+                }}
                 disabled={isToggling || isDeleting}
               />
             </div>
           </div>
 
           <div className="flex gap-2 pt-1">
-            {!isDefault && model.isActive && (
+            {!isDefault && !isLocal && model.isActive && (
               <Button
                 size="sm"
                 variant="outline"
@@ -455,11 +525,34 @@ export default function AIModels() {
                 设为默认
               </Button>
             )}
+
+            {isLocal && (
+              <Button
+                size="sm"
+                variant={isActiveLocal ? "default" : "outline"}
+                className="flex-1 h-8 text-xs"
+                onClick={() => {
+                  if (isActiveLocal) {
+                    setActiveLocalModelId(null);
+                    setActiveLocalModelIdState(null);
+                    toast({ title: "已取消激活", description: "恢复使用服务器端默认配置" });
+                  } else {
+                    setActiveLocalModelId(model.id);
+                    setActiveLocalModelIdState(model.id);
+                    toast({ title: "已激活本地配置", description: "后续请求将优先使用此模型配置" });
+                  }
+                }}
+              >
+                <Check className={`h-3 w-3 mr-1.5 ${isActiveLocal ? "text-white" : ""}`} />
+                {isActiveLocal ? "已激活" : "使用此配置"}
+              </Button>
+            )}
+
             <Button
               size="sm"
               variant="outline"
-              className={`h-8 text-xs ${!isDefault && model.isActive ? "flex-1" : "w-full"}`}
-              onClick={() => handleTestConnection(model)}
+              className={`h-8 text-xs ${(!isDefault && !isLocal && model.isActive) || isLocal ? "flex-1" : "w-full"}`}
+              onClick={() => testConnectionMutation.mutate(model)}
               disabled={isTesting || isDeleting}
             >
               {isTesting ? (
@@ -508,6 +601,39 @@ export default function AIModels() {
             </DialogHeader>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <div className="bg-muted/50 p-3 rounded-md mb-4">
+                  <Label className="mb-2 block">存储位置</Label>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="storage-server"
+                        name="storageType"
+                        checked={storageType === "server"}
+                        onChange={() => setStorageType("server")}
+                        className="h-4 w-4"
+                      />
+                      <Label htmlFor="storage-server" className="cursor-pointer">服务器 (推荐)</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="storage-local"
+                        name="storageType"
+                        checked={storageType === "local"}
+                        onChange={() => setStorageType("local")}
+                        className="h-4 w-4"
+                      />
+                      <Label htmlFor="storage-local" className="cursor-pointer">本地浏览器 (隐私)</Label>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {storageType === "server"
+                      ? "配置将保存在服务器数据库中，可跨设备同步。"
+                      : "配置仅保存在当前浏览器中，API Key 不会上云，更安全但无法跨设备。"}
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -621,10 +747,10 @@ export default function AIModels() {
                     <FormItem>
                       <FormLabel>API Key（可选）</FormLabel>
                       <FormControl>
-                        <Input 
-                          type="password" 
-                          placeholder="留空则使用环境变量配置" 
-                          {...field} 
+                        <Input
+                          type="password"
+                          placeholder="留空则使用环境变量配置"
+                          {...field}
                           value={field.value ?? ""}
                         />
                       </FormControl>
@@ -644,9 +770,9 @@ export default function AIModels() {
                       <FormItem>
                         <FormLabel>向量维度</FormLabel>
                         <FormControl>
-                          <Input 
-                            type="number" 
-                            placeholder="1536" 
+                          <Input
+                            type="number"
+                            placeholder="1536"
                             {...field}
                             value={field.value || ""}
                             onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
@@ -672,12 +798,12 @@ export default function AIModels() {
                           <FormItem>
                             <FormLabel>Temperature</FormLabel>
                             <FormControl>
-                              <Input 
-                                type="number" 
+                              <Input
+                                type="number"
                                 step="0.1"
                                 min="0"
                                 max="2"
-                                placeholder="0.7" 
+                                placeholder="0.7"
                                 {...field}
                                 value={field.value ?? 0.7}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0.7)}
@@ -697,9 +823,9 @@ export default function AIModels() {
                           <FormItem>
                             <FormLabel>Max Tokens</FormLabel>
                             <FormControl>
-                              <Input 
-                                type="number" 
-                                placeholder="4000" 
+                              <Input
+                                type="number"
+                                placeholder="4000"
                                 {...field}
                                 value={field.value ?? 4000}
                                 onChange={(e) => field.onChange(parseInt(e.target.value) || 4000)}
@@ -719,12 +845,12 @@ export default function AIModels() {
                           <FormItem>
                             <FormLabel>Top P</FormLabel>
                             <FormControl>
-                              <Input 
-                                type="number" 
+                              <Input
+                                type="number"
                                 step="0.1"
                                 min="0"
                                 max="1"
-                                placeholder="0.9" 
+                                placeholder="0.9"
                                 {...field}
                                 value={field.value ?? 0.9}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0.9)}
@@ -812,13 +938,16 @@ export default function AIModels() {
         </Dialog>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "embedding")}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "embedding" | "local")}>
         <TabsList>
           <TabsTrigger value="chat">
             对话模型 ({chatModels.length})
           </TabsTrigger>
           <TabsTrigger value="embedding">
             向量模型 ({embeddingModels.length})
+          </TabsTrigger>
+          <TabsTrigger value="local">
+            本地模型 ({localModels.length})
           </TabsTrigger>
         </TabsList>
 
@@ -871,6 +1000,31 @@ export default function AIModels() {
                 }}>
                   <Plus className="h-4 w-4 mr-2" />
                   添加模型
+                </Button>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="local" className="mt-6">
+          {localModels.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {localModels.map(renderModelCard)}
+            </div>
+          ) : (
+            <Card className="p-12">
+              <div className="text-center">
+                <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">暂无本地模型</h3>
+                <p className="text-sm text-muted-foreground mb-6">
+                  本地模型配置仅保存在您的浏览器中，不会上传到服务器。
+                </p>
+                <Button onClick={() => {
+                  setStorageType("local");
+                  setDialogOpen(true);
+                }}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  添加本地模型
                 </Button>
               </div>
             </Card>

@@ -41,7 +41,25 @@ import { projectWordCountService } from "./project-word-count-service";
 
 
 
+import { aiContext } from "./ai-context";
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Middleware to handle local AI config
+  app.use((req, res, next) => {
+    const configHeader = req.headers["x-ai-config"];
+    if (configHeader && typeof configHeader === "string") {
+      try {
+        const config = JSON.parse(atob(configHeader));
+        aiContext.run(config, next);
+      } catch (e) {
+        console.error("Failed to parse local AI config header", e);
+        next();
+      }
+    } else {
+      next();
+    }
+  });
+
   // Genre Configuration API
   app.get("/api/genres", async (req, res) => {
     try {
