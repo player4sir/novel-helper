@@ -64,6 +64,12 @@ import {
   users,
   type User,
   type InsertUser,
+  subscriptions,
+  type Subscription,
+  type InsertSubscription,
+  userUsage,
+  type UserUsage,
+  type InsertUserUsage,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, or } from "drizzle-orm";
@@ -217,6 +223,17 @@ export interface IStorage {
   getSystemConfig(key: string): Promise<SystemConfig | null>;
   setSystemConfig(key: string, value: any, environment?: string, description?: string): Promise<SystemConfig>;
   getAllSystemConfigs(): Promise<SystemConfig[]>;
+
+
+  // Subscriptions
+  getSubscription(userId: string): Promise<Subscription | undefined>;
+  createSubscription(subscription: InsertSubscription): Promise<Subscription>;
+  updateSubscription(id: string, updates: Partial<InsertSubscription>): Promise<Subscription>;
+  updateUserSubscriptionTier(userId: string, tier: string): Promise<User>;
+
+  // Usage
+  getUserUsage(userId: string, date: Date): Promise<UserUsage | undefined>;
+  trackUsage(userId: string, type: 'token' | 'project' | 'ai_request', amount: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1100,6 +1117,75 @@ export class DatabaseStorage implements IStorage {
 
   async getAllSystemConfigs(): Promise<SystemConfig[]> {
     return await db.select().from(systemConfig);
+  }
+
+  // Subscriptions
+  async getSubscription(userId: string): Promise<Subscription | undefined> {
+    const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, userId)).orderBy(desc(subscriptions.createdAt)).limit(1);
+    return sub;
+  }
+
+  async createSubscription(insertSubscription: InsertSubscription): Promise<Subscription> {
+    const [sub] = await db.insert(subscriptions).values(insertSubscription).returning();
+    return sub;
+  }
+
+  async updateSubscription(id: string, updates: Partial<InsertSubscription>): Promise<Subscription> {
+    const [sub] = await db
+      .update(subscriptions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(subscriptions.id, id))
+      .returning();
+    return sub;
+  }
+
+  async updateUserSubscriptionTier(userId: string, tier: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ subscriptionTier: tier })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  // Usage
+  async getUserUsage(userId: string, date: Date): Promise<UserUsage | undefined> {
+    // Truncate date to day
+    const day = new Date(date);
+    day.setHours(0, 0, 0, 0);
+
+    const [usage] = await db
+      .select()
+      .from(userUsage)
+      .where(and(eq(userUsage.userId, userId), eq(userUsage.date, day)));
+    return usage;
+  }
+
+  async trackUsage(userId: string, type: 'token' | 'project' | 'ai_request', amount: number): Promise<void> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [existing] = await db
+      .select()
+      .from(userUsage)
+      .where(and(eq(userUsage.userId, userId), eq(userUsage.date, today)));
+
+    if (existing) {
+      const updates: any = { updatedAt: new Date() };
+      if (type === 'token') updates.tokenCount = (existing.tokenCount || 0) + amount;
+      if (type === 'project') updates.projectCount = (existing.projectCount || 0) + amount;
+      if (type === 'ai_request') updates.aiRequestCount = (existing.aiRequestCount || 0) + amount;
+
+      await db.update(userUsage).set(updates).where(eq(userUsage.id, existing.id));
+    } else {
+      await db.insert(userUsage).values({
+        userId,
+        date: today,
+        tokenCount: type === 'token' ? amount : 0,
+        projectCount: type === 'project' ? amount : 0,
+        aiRequestCount: type === 'ai_request' ? amount : 0,
+      });
+    }
   }
 }
 

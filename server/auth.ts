@@ -16,7 +16,8 @@ declare global {
         interface User {
             id: string;
             username: string;
-            role: string;
+            role: string | null;
+            subscriptionTier: string | null;
         }
     }
 }
@@ -51,6 +52,12 @@ export function setupAuth(app: Express) {
                 }
 
                 const [hashedPassword, salt] = user.password.split(".");
+
+                if (!salt) {
+                    // Invalid password format (e.g. plain text or missing salt)
+                    return done(null, false, { message: "Invalid password format." });
+                }
+
                 const passwordBuffer = (await scryptAsync(password, salt, 64)) as Buffer;
                 const keyBuffer = Buffer.from(hashedPassword, "hex");
                 const match = timingSafeEqual(passwordBuffer, keyBuffer);
@@ -97,9 +104,9 @@ export function setupAuth(app: Express) {
     });
 
     app.post("/api/login", (req, res, next) => {
-        passport.authenticate("local", (err, user, info) => {
+        passport.authenticate("local", (err: any, user: Express.User, info: any) => {
             if (err) return next(err);
-            if (!user) return res.status(400).send(info.message || "Login failed");
+            if (!user) return res.status(400).send(info?.message || "Login failed");
             req.login(user, (err) => {
                 if (err) return next(err);
                 res.json(user);

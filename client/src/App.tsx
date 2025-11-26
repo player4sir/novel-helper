@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 
 import AuthPage from "@/pages/auth-page";
+import LandingPage from "@/pages/landing-page";
 import Dashboard from "@/pages/dashboard";
 import Write from "@/pages/write";
 import Outlines from "@/pages/outlines";
@@ -71,8 +72,10 @@ function Router() {
     <Switch>
       <Route path="/auth" component={AuthPage} />
 
+      <Route path="/" component={LandingPage} />
+
       {/* Protected Routes */}
-      <Route path="/">
+      <Route path="/app">
         <ProtectedRoute component={() => (
           <AuthenticatedLayout>
             <Dashboard />

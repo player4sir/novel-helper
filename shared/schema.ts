@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, vector } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, vector, json } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -10,7 +10,42 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(), // Hashed password
   role: text("role").default("user"), // 'admin' | 'user'
+  subscriptionTier: text("subscription_tier").default("free"), // 'free', 'pro'
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Subscriptions table - tracks user subscription status
+export const subscriptions = pgTable("subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull(), // 'free', 'pro_monthly', 'pro_yearly'
+  status: text("status").notNull(), // 'active', 'canceled', 'past_due'
+  currentPeriodStart: timestamp("current_period_start").notNull(),
+  currentPeriodEnd: timestamp("current_period_end").notNull(),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// User Usage table - tracks daily usage quotas
+export const userUsage = pgTable("user_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: timestamp("date").notNull(), // Truncated to day
+  tokenCount: integer("token_count").default(0),
+  projectCount: integer("project_count").default(0),
+  aiRequestCount: integer("ai_request_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Session table - for connect-pg-simple
+export const session = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: json("sess").notNull(),
+  expire: timestamp("expire").notNull(),
 });
 
 
@@ -722,6 +757,22 @@ export const insertUserSchema = createInsertSchema(users).omit({
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type Subscription = typeof subscriptions.$inferSelect;
+
+export const insertUserUsageSchema = createInsertSchema(userUsage).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertUserUsage = z.infer<typeof insertUserUsageSchema>;
+export type UserUsage = typeof userUsage.$inferSelect;
 
 export const insertProjectSchema = createInsertSchema(projects).omit({
   id: true,

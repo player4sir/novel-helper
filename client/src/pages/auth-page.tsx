@@ -24,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function AuthPage() {
     const { user, loginMutation, registerMutation } = useAuth();
@@ -46,25 +47,48 @@ export default function AuthPage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <Tabs defaultValue="login">
+                        <Tabs defaultValue="login" onValueChange={(v) => setLocation(v === "login" ? "/auth" : "/auth?mode=register")}>
                             <TabsList className="grid w-full grid-cols-2 mb-4">
                                 <TabsTrigger value="login">登录</TabsTrigger>
                                 <TabsTrigger value="register">注册</TabsTrigger>
                             </TabsList>
 
-                            <TabsContent value="login">
-                                <LoginForm />
-                            </TabsContent>
+                            <AnimatePresence mode="wait">
+                                <TabsContent value="login" asChild>
+                                    <motion.div
+                                        key="login"
+                                        initial={{ opacity: 0, x: -20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: 20 }}
+                                        transition={{ duration: 0.2 }}
+                                    >
+                                        <LoginForm />
+                                    </motion.div>
+                                </TabsContent>
 
-                            <TabsContent value="register">
-                                <RegisterForm />
-                            </TabsContent>
+                                <TabsContent value="register" asChild>
+                                    <motion.div
+                                        key="register"
+                                        initial={{ opacity: 0, x: 20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: -20 }}
+                                        transition={{ duration: 0.2 }}
+                                    >
+                                        <RegisterForm />
+                                    </motion.div>
+                                </TabsContent>
+                            </AnimatePresence>
                         </Tabs>
                     </CardContent>
                 </Card>
             </div>
             <div className="hidden lg:flex flex-col justify-center p-12 bg-slate-900 text-white">
-                <div className="max-w-xl">
+                <motion.div
+                    className="max-w-xl"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2, duration: 0.5 }}
+                >
                     <h1 className="text-4xl font-bold mb-6">释放你的创作潜能</h1>
                     <p className="text-lg text-slate-300 mb-8">
                         Novel Helper 结合了先进的 AI 技术与专业的写作理论，为你提供从灵感构思到大纲生成、角色塑造再到正文写作的全流程辅助。
@@ -73,32 +97,40 @@ export default function AuthPage() {
                         <Feature
                             title="智能大纲"
                             description="一键生成结构严谨的故事大纲，支持多级细化"
+                            delay={0.3}
                         />
                         <Feature
                             title="角色工坊"
                             description="深度塑造立体角色，自动生成人物关系网"
+                            delay={0.4}
                         />
                         <Feature
                             title="世界观构建"
                             description="辅助建立宏大的世界背景与力量体系"
+                            delay={0.5}
                         />
                         <Feature
                             title="灵感助手"
                             description="卡文时的得力助手，提供无限创意火花"
+                            delay={0.6}
                         />
                     </div>
-                </div>
+                </motion.div>
             </div>
         </div>
     );
 }
 
-function Feature({ title, description }: { title: string; description: string }) {
+function Feature({ title, description, delay }: { title: string; description: string, delay: number }) {
     return (
-        <div>
+        <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay, duration: 0.5 }}
+        >
             <h3 className="font-semibold mb-2 text-blue-400">{title}</h3>
             <p className="text-sm text-slate-400">{description}</p>
-        </div>
+        </motion.div>
     );
 }
 

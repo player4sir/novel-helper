@@ -40,6 +40,7 @@ import { genreConfigService } from "./genre-config-service";
 import { projectWordCountService } from "./project-word-count-service";
 import { aiContext } from "./ai-context";
 import { setupAuth } from "./auth";
+import { checkUsageQuota } from "./usage-middleware";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -116,7 +117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects", isAuthenticated, async (req, res) => {
+  app.post("/api/projects", isAuthenticated, checkUsageQuota, async (req, res) => {
     try {
       const projectData = insertProjectSchema.parse(req.body);
       const project = await storage.createProject({
@@ -136,7 +137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Stepwise Creation API
 
   // 1. Start Session
-  app.post("/api/creation/session", isAuthenticated, async (req, res) => {
+  app.post("/api/creation/session", isAuthenticated, checkUsageQuota, async (req, res) => {
     try {
       const { titleSeed, premise, genre, style, targetWordCount } = req.body;
       const userId = req.user!.id;
@@ -165,7 +166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // 1.5 Auto Creation (Parallel Execution)
   // 1.5 Auto Creation (Parallel Execution) - SSE Streaming
-  app.get("/api/creation/auto", async (req, res) => {
+  app.get("/api/creation/auto", isAuthenticated, checkUsageQuota, async (req, res) => {
     const { titleSeed, premise, genre, style, targetWordCount, userId } = req.query;
 
     if (!titleSeed) {

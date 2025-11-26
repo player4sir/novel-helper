@@ -38,7 +38,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const mainItems = [
-  { title: "项目概览", url: "/", icon: Home, testId: "link-dashboard" },
+  { title: "项目概览", url: "/app", icon: Home, testId: "link-dashboard" },
   { title: "创作工作台", url: "/write", icon: BookOpen, testId: "link-write" },
   { title: "大纲管理", url: "/outlines", icon: FileText, testId: "link-outlines" },
 ];
