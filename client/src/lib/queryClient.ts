@@ -2,7 +2,7 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getLocalAIConfigHeader } from "./ai-config";
 
 // API Base URL from environment variable, fallback to relative path for development
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
