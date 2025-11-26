@@ -2,6 +2,5 @@
     "name": "novel-helper-backend",
     "environment": {
         "NODE_VERSION": "20"
-    },
-    "dockerfile": "Dockerfile.backend"
+    }
 }
