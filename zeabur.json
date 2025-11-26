@@ -1,0 +1,9 @@
+{
+    "name": "novel-helper-backend",
+    "buildCommand": "npm run build",
+    "startCommand": "npm run start",
+    "environment": {
+        "NODE_VERSION": "20"
+    },
+    "dockerfile": "Dockerfile"
+}

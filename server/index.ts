@@ -11,6 +11,7 @@ app.use(cors({
   origin: process.env.NODE_ENV === "production" 
     ? [
         /\.zeabur\.app$/,  // Zeabur 域名
+        /\.pages\.dev$/,  // Cloudflare Pages
         /capacitor:\/\//,  // Capacitor 应用
         /http:\/\/localhost/,  // 本地开发
       ]

@@ -12,3 +12,8 @@ out/
 # Build artifacts
 dist-electron/
 *.tsbuildinfo
+
+# Cloudflare
+.wrangler/
+.dev.vars
+wrangler.toml.local
