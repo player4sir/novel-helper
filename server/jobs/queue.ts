@@ -1,11 +1,4 @@
-import { Queue, Worker, QueueEvents, Job } from 'bullmq';
-import IORedis from 'ioredis';
 import { EventEmitter } from 'events';
-
-// Configuration
-const USE_REDIS = process.env.USE_REDIS === 'true';
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
 
 // Queue names
 export const QUEUE_NAMES = {
@@ -14,7 +7,18 @@ export const QUEUE_NAMES = {
     RAG_INDEX: 'rag-indexing',
 };
 
-// Interface for our Queue (compatible with BullMQ Queue)
+// Mock Job Interface
+interface Job {
+    id: string;
+    name: string;
+    data: any;
+    opts?: any;
+    timestamp: number;
+    updateProgress: (progress: number | object) => Promise<void>;
+    log: (row: string) => Promise<void>;
+}
+
+// Interface for our Queue
 interface IQueue {
     add(name: string, data: any, opts?: any): Promise<Job>;
     close(): Promise<void>;
@@ -36,13 +40,11 @@ class MockQueue extends EventEmitter implements IQueue {
             data,
             opts,
             timestamp: Date.now(),
-            // Mock methods needed by Job
             updateProgress: async () => { },
             log: async () => { },
-        } as unknown as Job;
+        } as Job;
 
         // Emit event for worker to pick up
-        // Use setImmediate to simulate async and allow event loop to turn
         setImmediate(() => {
             mockJobEmitter.emit(this.name, job);
         });
@@ -57,84 +59,37 @@ class MockQueue extends EventEmitter implements IQueue {
 // Global emitter for mock jobs
 const mockJobEmitter = new EventEmitter();
 
-let connection: IORedis | null = null;
-let summaryQueue: Queue | MockQueue;
-let vectorizeQueue: Queue | MockQueue;
+const summaryQueue = new MockQueue(QUEUE_NAMES.SUMMARY);
+const vectorizeQueue = new MockQueue(QUEUE_NAMES.VECTORIZE);
 
-if (USE_REDIS) {
-    // Redis Mode
-    const redisConfig = {
-        host: REDIS_HOST,
-        port: REDIS_PORT,
-        maxRetriesPerRequest: null,
-    };
+console.log('[Queue] Queues initialized (In-Memory Mode)');
 
-    try {
-        connection = new IORedis(redisConfig);
-
-        connection.on('error', (err) => {
-            console.error('[BullMQ] Redis connection error:', err.message);
-        });
-
-        connection.on('connect', () => {
-            console.log('[BullMQ] Redis connected');
-        });
-
-        summaryQueue = new Queue(QUEUE_NAMES.SUMMARY, { connection });
-        vectorizeQueue = new Queue(QUEUE_NAMES.VECTORIZE, { connection });
-
-        console.log('[BullMQ] Queues initialized (Redis Mode)');
-    } catch (error) {
-        console.error('[BullMQ] Failed to initialize Redis connection:', error);
-        // Fallback to memory would happen here if we wanted automatic fallback, 
-        // but explicit configuration is better.
-        throw error;
-    }
-} else {
-    // In-Memory Mode
-    summaryQueue = new MockQueue(QUEUE_NAMES.SUMMARY);
-    vectorizeQueue = new MockQueue(QUEUE_NAMES.VECTORIZE);
-    console.log('[BullMQ] Queues initialized (In-Memory Mode)');
-}
-
-export { summaryQueue, vectorizeQueue, connection };
+export { summaryQueue, vectorizeQueue };
 
 // Worker factory
 export const createWorker = (queueName: string, processor: any) => {
-    if (!USE_REDIS) {
-        console.log(`[BullMQ] Creating MockWorker for ${queueName}`);
+    console.log(`[Queue] Creating Worker for ${queueName}`);
 
-        // Return a mock worker that listens to the emitter
-        const mockWorker = {
-            on: (event: string, cb: Function) => {
-                // We can implement simple event handling if needed
-            },
-            close: async () => {
-                mockJobEmitter.removeAllListeners(queueName);
-            }
-        };
-
-        // Set up the listener
-        mockJobEmitter.on(queueName, async (job) => {
-            try {
-                console.log(`[MockWorker] Processing ${job.name} in ${queueName}`);
-                await processor(job);
-                console.log(`[MockWorker] Completed ${job.name}`);
-            } catch (err) {
-                console.error(`[MockWorker] Failed ${job.name}:`, err);
-            }
-        });
-
-        return mockWorker as unknown as Worker;
-    }
-
-    // Redis Mode Worker
-    return new Worker(queueName, processor, {
-        connection: connection!,
-        concurrency: 5,
-        limiter: {
-            max: 10,
-            duration: 1000,
+    // Return a mock worker that listens to the emitter
+    const mockWorker = {
+        on: (event: string, cb: Function) => {
+            // We can implement simple event handling if needed
         },
+        close: async () => {
+            mockJobEmitter.removeAllListeners(queueName);
+        }
+    };
+
+    // Set up the listener
+    mockJobEmitter.on(queueName, async (job) => {
+        try {
+            console.log(`[Worker] Processing ${job.name} in ${queueName}`);
+            await processor(job);
+            console.log(`[Worker] Completed ${job.name}`);
+        } catch (err) {
+            console.error(`[Worker] Failed ${job.name}:`, err);
+        }
     });
+
+    return mockWorker;
 };

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -57,6 +57,15 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
         setState((prev) => ({ ...prev, isGenerating: false, message: "生成已停止" }));
     }, []);
 
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (eventSourceRef.current) {
+                eventSourceRef.current.close();
+            }
+        };
+    }, []);
+
     const startGeneration = useCallback(async (projectId: string, chapterId: string) => {
         if (state.isGenerating) return;
 
@@ -80,149 +89,73 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
             eventSourceRef.current = eventSource;
 
             eventSource.onopen = () => {
-                setState((prev) => ({ ...prev, step: "connected", message: "已连接，准备生成..." }));
+                setState((prev) => ({ ...prev, step: "connected", message: "已连接，开始生成..." }));
             };
 
             eventSource.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
 
-                    switch (data.type) {
-                        case "connected":
-                            setState((prev) => ({ ...prev, step: "connected" }));
-                            break;
-
-                        case "progress":
-                            setState((prev) => ({
-                                ...prev,
-                                progress: data.progress || prev.progress,
-                                step: data.step || prev.step,
-                                message: data.message || prev.message,
-                            }));
-                            break;
-
-                        case "scenes_decomposed":
-                            setState((prev) => ({
-                                ...prev,
-                                progress: data.data.progress,
-                                message: `已分解为 ${data.data.totalScenes} 个场景`,
-                                currentScene: {
-                                    index: 0,
-                                    total: data.data.totalScenes,
-                                    purpose: "",
-                                },
-                            }));
-                            break;
-
-                        case "scene_start":
-                            setState((prev) => ({
-                                ...prev,
-                                progress: data.data.progress,
-                                message: `正在生成场景 ${data.data.sceneIndex + 1}/${data.data.totalScenes}...`,
-                                currentScene: {
-                                    index: data.data.sceneIndex,
-                                    total: data.data.totalScenes,
-                                    purpose: data.data.scenePurpose,
-                                    partialContent: "",
-                                },
-                            }));
-                            if (options.onSceneStart) {
-                                options.onSceneStart(data.data.sceneIndex, data.data.totalScenes, data.data.scenePurpose);
-                            }
-                            break;
-
-                        case "thinking_start":
-                            setState((prev) => ({
-                                ...prev,
-                                isThinking: true,
-                                message: data.data.message || "AI正在深度思考剧情走向..."
-                            }));
-                            break;
-
-                        case "thinking_end":
-                            setState((prev) => ({
-                                ...prev,
-                                isThinking: false,
-                                message: "思考完成，开始撰写..."
-                            }));
-                            break;
-
-                        case "scene_content_chunk":
-                            setState((prev) => {
-                                if (!prev.currentScene) return prev;
-                                return {
-                                    ...prev,
-                                    currentScene: {
-                                        ...prev.currentScene,
-                                        partialContent: (prev.currentScene.partialContent || "") + data.data.chunk
-                                    }
-                                };
-                            });
-                            // Call onChunk callback
-                            if (options.onChunk) {
-                                options.onChunk(data.data.chunk);
-                            }
-                            break;
-
-                        case "scene_completed":
-                            setState((prev) => ({
-                                ...prev,
-                                progress: data.data.progress,
-                                stats: {
-                                    ...prev.stats,
-                                    scenesCompleted: prev.stats.scenesCompleted + 1,
-                                    wordsGenerated: prev.stats.wordsGenerated + (data.data.wordCount || 0),
-                                },
-                            }));
-                            // Invalidate queries to refresh chapter content
-                            queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
-                            break;
-
-                        case "scene_failed":
-                            setState((prev) => ({
-                                ...prev,
-                                progress: data.data.progress,
-                                message: `场景 ${data.data.sceneIndex + 1} 生成失败: ${data.data.error}`,
-                                stats: {
-                                    ...prev.stats,
-                                    failedScenes: prev.stats.failedScenes + 1,
-                                },
-                            }));
-                            break;
-
-                        case "completed":
-                            stopGeneration();
-                            setState((prev) => ({
-                                ...prev,
-                                isGenerating: false,
-                                progress: 100,
-                                step: "completed",
-                                message: `生成完成！共 ${data.data.wordCount} 字`,
-                            }));
-                            toast({
-                                title: "生成完成",
-                                description: `成功生成 ${data.data.successfulScenes} 个场景，共 ${data.data.wordCount} 字。`,
-                            });
-                            queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
-                            break;
-
-                        case "error":
-                            stopGeneration();
-                            setState((prev) => ({
-                                ...prev,
-                                isGenerating: false,
-                                step: "error",
-                                message: `错误: ${data.error}`,
-                            }));
-                            toast({
-                                title: "生成失败",
-                                description: data.error,
-                                variant: "destructive",
-                            });
-                            break;
+                    if (data.type === "done") {
+                        stopGeneration();
+                        setState((prev) => ({
+                            ...prev,
+                            isGenerating: false,
+                            progress: 100,
+                            step: "completed",
+                            message: "生成完成！",
+                        }));
+                        toast({
+                            title: "生成完成",
+                            description: "章节内容已生成。",
+                        });
+                        queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
+                        return;
                     }
-                } catch (e) {
-                    console.error("Error parsing SSE event:", e);
+
+                    if (data.type === "error") {
+                        throw new Error(data.error);
+                    }
+
+                    if (data.type === "progress") {
+                        setState((prev) => ({
+                            ...prev,
+                            progress: data.data.progress,
+                            step: data.data.step || "generating",
+                            message: data.data.message || prev.message,
+                        }));
+                    } else if (data.type === "scene_start") {
+                        const { index, total, purpose } = data.data;
+                        options.onSceneStart?.(index, total, purpose);
+                        setState((prev) => ({
+                            ...prev,
+                            currentScene: { index, total, purpose },
+                            message: `正在生成第 ${index + 1}/${total} 幕...`,
+                        }));
+                    } else if (data.type === "content_chunk") {
+                        options.onChunk?.(data.data.content);
+                        setState((prev) => ({
+                            ...prev,
+                            currentScene: {
+                                ...prev.currentScene!,
+                                partialContent: (prev.currentScene?.partialContent || "") + data.data.content
+                            }
+                        }));
+                    } else if (data.type === "scene_completed") {
+                        setState((prev) => ({
+                            ...prev,
+                            stats: {
+                                ...prev.stats,
+                                scenesCompleted: prev.stats.scenesCompleted + 1,
+                                wordsGenerated: prev.stats.wordsGenerated + data.data.wordCount,
+                            },
+                            currentScene: undefined
+                        }));
+                        // Invalidate query to fetch latest content
+                        queryClient.invalidateQueries({ queryKey: ["chapter", chapterId] });
+                    }
+                } catch (error) {
+                    console.error("Error parsing SSE data:", error);
                 }
             };
 
@@ -236,8 +169,8 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
                     message: "连接中断",
                 }));
                 toast({
-                    title: "连接错误",
-                    description: "与生成服务的连接中断，请重试。",
+                    title: "生成中断",
+                    description: "与服务器的连接已断开",
                     variant: "destructive",
                 });
             };
@@ -256,7 +189,7 @@ export function useChapterGeneration(options: UseChapterGenerationOptions = {}):
                 variant: "destructive",
             });
         }
-    }, [state.isGenerating, stopGeneration, toast, queryClient]);
+    }, [state.isGenerating, stopGeneration, toast, queryClient, options]);
 
     return {
         ...state,

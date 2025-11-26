@@ -24,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, BookOpen } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
+import { useLocation } from "wouter";
 
 const loginSchema = z.object({
     username: z.string().min(1, "用户名不能为空"),
@@ -44,6 +45,7 @@ export function AuthDialog({
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<"login" | "register">(defaultTab);
+    const [, setLocation] = useLocation();
 
     const handleOpenChange = (open: boolean) => {
         setIsOpen(open);
@@ -54,6 +56,8 @@ export function AuthDialog({
 
     const handleSuccess = () => {
         setIsOpen(false);
+        // 登录/注册成功后重定向到应用
+        setLocation("/app");
     };
 
     return (
@@ -71,27 +75,27 @@ export function AuthDialog({
                             Novel Helper
                         </span>
                     </div>
-                    
+
                     <DialogTitle className="text-2xl text-center text-white">
                         {activeTab === "login" ? "欢迎回来" : "开始创作"}
                     </DialogTitle>
                     <DialogDescription className="text-gray-400 text-center">
-                        {activeTab === "login" 
-                            ? "登录继续您的创作" 
+                        {activeTab === "login"
+                            ? "登录继续您的创作"
                             : "创建账号，开启 AI 辅助创作之旅"}
                     </DialogDescription>
                 </DialogHeader>
 
                 <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "login" | "register")} className="w-full mt-2">
                     <TabsList className="grid w-full grid-cols-2 bg-white/5">
-                        <TabsTrigger 
-                            value="login" 
+                        <TabsTrigger
+                            value="login"
                             className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-blue-500 data-[state=active]:text-white"
                         >
                             登录
                         </TabsTrigger>
-                        <TabsTrigger 
-                            value="register" 
+                        <TabsTrigger
+                            value="register"
                             className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-blue-500 data-[state=active]:text-white"
                         >
                             注册
@@ -182,7 +186,7 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
                         </FormItem>
                     )}
                 />
-                
+
                 <Button
                     type="submit"
                     className="w-full h-11 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white border-0 mt-6"
@@ -257,7 +261,7 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
                         </FormItem>
                     )}
                 />
-                
+
                 <Button
                     type="submit"
                     className="w-full h-11 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white border-0 mt-6"

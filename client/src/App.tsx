@@ -13,6 +13,7 @@ import { Loader2 } from "lucide-react";
 
 import LandingPage from "@/pages/landing-page";
 import Dashboard from "@/pages/dashboard";
+import Profile from "@/pages/profile";
 import Write from "@/pages/write";
 import Outlines from "@/pages/outlines";
 import Characters from "@/pages/characters";
@@ -79,6 +80,13 @@ function Router() {
         <ProtectedRoute component={() => (
           <AuthenticatedLayout>
             <Dashboard />
+          </AuthenticatedLayout>
+        )} />
+      </Route>
+      <Route path="/profile">
+        <ProtectedRoute component={() => (
+          <AuthenticatedLayout>
+            <Profile />
           </AuthenticatedLayout>
         )} />
       </Route>

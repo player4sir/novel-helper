@@ -1,0 +1,287 @@
+﻿import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, BookOpen, FileText, TrendingUp, MoreVertical, Pencil, Trash2, Copy, Archive, Calendar } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CreateProjectDialog } from "@/components/create-project-dialog";
+import { EditProjectDialog } from "@/components/edit-project-dialog";
+import { DeleteProjectDialog } from "@/components/delete-project-dialog";
+import type { Project } from "@shared/schema";
+import { Progress } from "@/components/ui/progress";
+
+interface TodayStats {
+  wordsWritten: number;
+  chaptersCompleted: number;
+  date: string;
+}
+
+export default function Dashboard() {
+  const [, setLocation] = useLocation();
+  const [deleteProject, setDeleteProject] = useState<Project | null>(null);
+
+  const { data: projects, isLoading } = useQuery<Project[]>({
+    queryKey: ["/api/projects"],
+  });
+
+  const { data: todayStats } = useQuery<TodayStats>({
+    queryKey: ["/api/statistics/today/summary"],
+    refetchInterval: 60000, // 姣忓垎閽熷埛鏂颁竴娆?  });
+
+  const activeProjects = projects?.filter((p: Project) => p.status === "active") || [];
+  const totalWords = projects?.reduce((sum: number, p: Project) => sum + (p.currentWordCount || 0), 0) || 0;
+
+  const queryClient = useQueryClient();
+
+  const handleProjectCreated = async (projectId: string) => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+    setLocation(`/write?project=${projectId}`);
+  };
+
+  return (
+    <div className="p-6 max-w-screen-2xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold" data-testid="text-page-title">
+            椤圭洰姒傝
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            绠＄悊鎮ㄧ殑灏忚鍒涗綔椤圭洰
+          </p>
+        </div>
+        <CreateProjectDialog onSuccess={handleProjectCreated}>
+          <Button data-testid="button-create-project">
+            <Plus className="h-4 w-4 mr-2" />
+            鏂板缓椤圭洰
+          </Button>
+        </CreateProjectDialog>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">娲昏穬椤圭洰</CardTitle>
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-active-projects">
+              {activeProjects.length}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {projects?.length || 0} 涓」鐩€昏
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">鎬诲瓧鏁?/CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-total-words">
+              {totalWords.toLocaleString()}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              璺ㄦ墍鏈夐」鐩?            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">浠婃棩杩涘害</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-today-words">
+              {todayStats?.wordsWritten?.toLocaleString() || 0}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              瀛楋紙浠婃棩鏂板锛?              {todayStats?.chaptersCompleted ? ` 路 ${todayStats.chaptersCompleted} 绔燻 : ''}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Projects List */}
+      <div>
+        <h2 className="text-lg font-semibold mb-4">鎴戠殑椤圭洰</h2>
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <Card key={i}>
+                <CardHeader>
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="h-4 w-1/2 mt-2" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-2/3 mt-2" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : projects && projects.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {projects.map((project: Project) => {
+              const progress = project.targetWordCount && project.targetWordCount > 0
+                ? Math.min(((project.currentWordCount || 0) / project.targetWordCount) * 100, 100)
+                : 0;
+
+              return (
+                <Card
+                  key={project.id}
+                  className="group hover:shadow-md hover:border-primary/50 transition-all relative"
+                  data-testid={`card-project-${project.id}`}
+                >
+                  <div className="absolute top-4 right-4 z-10">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                          }}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <EditProjectDialog project={project}>
+                          <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                            <Pencil className="h-4 w-4 mr-2" />
+                            缂栬緫
+                          </DropdownMenuItem>
+                        </EditProjectDialog>
+                        <DropdownMenuItem>
+                          <Copy className="h-4 w-4 mr-2" />
+                          澶嶅埗
+                        </DropdownMenuItem>
+                        <DropdownMenuItem>
+                          <Archive className="h-4 w-4 mr-2" />
+                          褰掓。
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onSelect={() => setDeleteProject(project)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          鍒犻櫎
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  <Link href={`/write?project=${project.id}`}>
+                    <div className="cursor-pointer">
+                      <CardHeader className="pb-4 pr-14">
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <CardTitle className="text-xl font-semibold mb-1.5 group-hover:text-primary transition-colors truncate">
+                            {project.title}
+                          </CardTitle>
+                          <div className="flex items-center gap-1.5 flex-wrap min-h-[24px]">
+                            <Badge variant="secondary" className="text-xs font-normal shrink-0">
+                              {project.genre}
+                            </Badge>
+                            {project.style && (
+                              <Badge variant="outline" className="text-xs font-normal shrink-0">
+                                {project.style}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="pt-0 space-y-4">
+                        {project.description && (
+                          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed break-words">
+                            {project.description}
+                          </p>
+                        )}
+
+                        <div className="space-y-2">
+                          <div className="flex items-baseline justify-between gap-2 min-w-0">
+                            <span className="text-2xl font-bold truncate">
+                              {(project.currentWordCount || 0).toLocaleString()}
+                            </span>
+                            {project.targetWordCount && (
+                              <span className="text-sm text-muted-foreground shrink-0 whitespace-nowrap">
+                                / {project.targetWordCount.toLocaleString()} 瀛?                              </span>
+                            )}
+                          </div>
+
+                          {project.targetWordCount && project.targetWordCount > 0 && (
+                            <div className="space-y-1">
+                              <Progress value={progress} className="h-2" />
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <span>瀹屾垚搴?/span>
+                                <span className="font-medium">{Math.round(progress)}%</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-muted-foreground pt-3 border-t gap-2">
+                          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                            <Calendar className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{new Date(project.updatedAt).toLocaleDateString('zh-CN')}</span>
+                          </div>
+                          <Badge variant={project.status === 'active' ? 'default' : 'secondary'} className="text-xs shrink-0">
+                            {project.status === 'active' ? '杩涜涓? : project.status === 'completed' ? '宸插畬鎴? : '宸插綊妗?}
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </div>
+                  </Link>
+                </Card>
+              );
+            })}
+          </div>
+        ) : (
+          <Card className="p-12">
+            <div className="text-center">
+              <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">鏆傛棤椤圭洰</h3>
+              <p className="text-sm text-muted-foreground mb-6">
+                鍒涘缓鎮ㄧ殑绗竴涓皬璇撮」鐩紝寮€濮婣I杈呭姪鍒涗綔涔嬫梾
+              </p>
+              <CreateProjectDialog onSuccess={handleProjectCreated}>
+                <Button data-testid="button-create-first-project">
+                  <Plus className="h-4 w-4 mr-2" />
+                  鍒涘缓椤圭洰
+                </Button>
+              </CreateProjectDialog>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {deleteProject && (
+        <DeleteProjectDialog
+          project={deleteProject}
+          open={!!deleteProject}
+          onOpenChange={(open) => !open && setDeleteProject(null)}
+        />
+      )}
+    </div>
+  );
+}

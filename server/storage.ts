@@ -70,6 +70,7 @@ import {
   userUsage,
   type UserUsage,
   type InsertUserUsage,
+  paymentOrders,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, or, sql } from "drizzle-orm";
@@ -87,6 +88,8 @@ export interface IStorage {
   sessionStore: session.Store;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(username: string, password: string): Promise<User>;
+  updateUserPassword(userId: string, newPassword: string): Promise<void>;
+  getPaymentOrders(userId: string): Promise<any[]>;
 
   // Projects
   getProjects(userId: string): Promise<Project[]>;
@@ -257,6 +260,17 @@ export class DatabaseStorage implements IStorage {
     const hashedPassword = `${buf.toString("hex")}.${salt}`;
     const [user] = await db.insert(users).values({ username, password: hashedPassword, role: "user" }).returning();
     return user;
+  }
+
+  async updateUserPassword(userId: string, newPassword: string): Promise<void> {
+    const salt = randomBytes(16).toString("hex");
+    const buf = (await scryptAsync(newPassword, salt, 64)) as Buffer;
+    const hashedPassword = `${buf.toString("hex")}.${salt}`;
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, userId));
+  }
+
+  async getPaymentOrders(userId: string): Promise<any[]> {
+    return await db.select().from(paymentOrders).where(eq(paymentOrders.userId, userId)).orderBy(desc(paymentOrders.createdAt));
   }
 
   // Projects

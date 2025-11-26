@@ -31,10 +31,11 @@ import {
   insertStatisticSchema,
   statistics,
   styleProfiles,
-
   insertStyleProfileSchema,
   paymentOrders,
+  subscriptions,
 } from "@shared/schema";
+// import { queueService } from "./queue";
 import { vectorizeQueue, summaryQueue } from "./jobs/queue";
 import { summaryChainService } from "./summary-chain-service";
 import { versionControlService } from "./version-control-service";
@@ -44,6 +45,11 @@ import { aiContext } from "./ai-context";
 import { setupAuth } from "./auth";
 import { checkUsageQuota } from "./usage-middleware";
 import { alipayService, wechatPayService } from "./payment-service";
+import { scrypt, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+import { users } from "@shared/schema";
+
+const scryptAsync = promisify(scrypt);
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -130,6 +136,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json(project);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // User Dashboard Routes
+  app.post("/api/user/password", isAuthenticated, async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const userId = req.user!.id;
+
+      // Verify current password
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      if (!user) return res.status(404).send("User not found");
+
+      const [hashedPassword, salt] = user.password.split(".");
+      const passwordBuffer = (await scryptAsync(currentPassword, salt, 64)) as Buffer;
+      const keyBuffer = Buffer.from(hashedPassword, "hex");
+      const match = timingSafeEqual(passwordBuffer, keyBuffer);
+
+      if (!match) {
+        return res.status(400).json({ error: "当前密码错误" });
+      }
+
+      // Update password
+      await storage.updateUserPassword(userId, newPassword);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/user/payments", isAuthenticated, async (req, res) => {
+    try {
+      const payments = await storage.getPaymentOrders(req.user!.id);
+      res.json(payments);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -967,40 +1009,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
 
-    // Import better-sse
+    // SSE Implementation
     const { createSession } = await import("better-sse");
-
-    // Create SSE session
-    const session = await createSession(req, res, {
-      keepAlive: 10000,
-    });
-
-    let clientDisconnected = false;
-
-    session.on("disconnected", () => {
-      clientDisconnected = true;
-      console.log("[SSE] Client disconnected");
-    });
-
-    session.push({ type: "connected" });
+    const session = await createSession(req, res);
 
     try {
-      const generator = contentGenerationService.generateChapterStream(projectId, chapterId);
+      const generator = contentGenerationService.generateChapterStream(
+        projectId,
+        chapterId,
+        req.query.styleProfileId as string
+      );
 
       for await (const event of generator) {
-        if (clientDisconnected) break;
         session.push(event);
       }
 
-      console.log("[SSE] Generation stream completed");
+      session.push({ type: "done" });
     } catch (error: any) {
       console.error("[Chapter Generation] Error:", error);
-      if (!clientDisconnected) {
-        session.push({
-          type: "error",
-          error: error.message
-        });
-      }
+      session.push({ type: "error", error: error.message });
     }
   });
 
