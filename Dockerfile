@@ -32,6 +32,7 @@ EXPOSE 5000
 # 设置环境变量
 ENV NODE_ENV=production
 ENV PORT=5000
+ENV API_ONLY=true
 
 # 启动后端服务
 CMD ["node", "dist/index.js"]
