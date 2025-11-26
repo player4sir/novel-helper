@@ -65,6 +65,7 @@ export class CharacterGenerator {
   async generateCharacters(
     context: ProjectContext,
     count: number,
+    userId: string,
     options?: GenerationOptions
   ): Promise<Character[]> {
     console.log(`[CharacterGenerator] Generating ${count} characters`);
@@ -73,7 +74,7 @@ export class CharacterGenerator {
 
     // Ensure at least one protagonist
     if (count > 0) {
-      const protagonist = await this.generateCharacter(context, "主角", options);
+      const protagonist = await this.generateCharacter(context, "主角", userId, options);
       characters.push(protagonist);
     }
 
@@ -93,7 +94,7 @@ export class CharacterGenerator {
       // Retry up to 3 times if we get a duplicate name
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const candidate = await this.generateCharacter(updatedContext, role, options);
+          const candidate = await this.generateCharacter(updatedContext, role, userId, options);
 
           // Check for duplicates
           const isDuplicate = characters.some(c => c.name === candidate.name) ||
@@ -113,7 +114,7 @@ export class CharacterGenerator {
       // If we still don't have a valid character (or kept getting duplicates), try one last time and force rename if needed
       if (!character) {
         try {
-          character = await this.generateCharacter(updatedContext, role, options);
+          character = await this.generateCharacter(updatedContext, role, userId, options);
           // Force rename if duplicate
           if (characters.some(c => c.name === character!.name)) {
             character.name = `${character.name} (新)`;
@@ -136,6 +137,7 @@ export class CharacterGenerator {
   async generateCharacter(
     context: ProjectContext,
     role: CharacterRole,
+    userId: string,
     options?: GenerationOptions
   ): Promise<Character> {
     console.log(`[CharacterGenerator] Generating ${role} character`);
@@ -144,7 +146,7 @@ export class CharacterGenerator {
     const prompt = this.buildCharacterPrompt(context, role);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     let selectedModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     // If modelId is provided in options, try to find that specific model
@@ -232,7 +234,8 @@ export class CharacterGenerator {
    */
   async enrichCharacter(
     character: Character,
-    context: ProjectContext
+    context: ProjectContext,
+    userId: string
   ): Promise<Character> {
     console.log(`[CharacterGenerator] Enriching character: ${character.name}`);
 
@@ -240,7 +243,7 @@ export class CharacterGenerator {
     const prompt = this.buildEnrichmentPrompt(character, context);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     if (!defaultModel) {

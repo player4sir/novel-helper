@@ -69,7 +69,7 @@ export class CreationOrchestrator {
       console.log("[Orchestrator] Phase 1: Foundation & Directives");
       onProgress?.("basic", "running", "第一阶段：生成基础设定与指导原则...", 10);
 
-      const basicResult = await this.executeBasicStep(seed);
+      const basicResult = await this.executeBasicStep(seed, userId);
       await sessionManager.saveStepResult(sessionId, "basic", basicResult);
 
       onProgress?.("basic", "completed", "第一阶段：基础设定生成完成", 25);
@@ -260,7 +260,7 @@ export class CreationOrchestrator {
 
     switch (targetStep) {
       case "basic":
-        stepResult = await this.executeBasicStep(seed);
+        stepResult = await this.executeBasicStep(seed, session.userId || undefined);
         break;
       case "characters":
         stepResult = await this.executeCharactersStep(seed, session);
@@ -321,7 +321,7 @@ export class CreationOrchestrator {
 
     switch (step) {
       case "basic":
-        stepResult = await this.executeBasicStep(seed, enhancedOptions);
+        stepResult = await this.executeBasicStep(seed, session.userId || undefined, enhancedOptions);
         break;
       case "characters":
         stepResult = await this.executeCharactersStep(seed, session, enhancedOptions);
@@ -785,11 +785,11 @@ export class CreationOrchestrator {
   /**
    * Execute basic step (generate basic project info)
    */
-  private async executeBasicStep(seed: ProjectSeed, options?: any): Promise<StepResult> {
+  private async executeBasicStep(seed: ProjectSeed, userId?: string, options?: any): Promise<StepResult> {
     console.log("[Orchestrator] Executing basic step (Phase 1)");
 
     // Use EnhancedProjectCreationService to generate basic info + directives
-    const enhancedData = await enhancedProjectCreationService.generateBasicInfo(seed, {
+    const enhancedData = await enhancedProjectCreationService.generateBasicInfo(seed, userId || "", {
       modelId: options?.modelId,
       temperature: options?.temperature
     });
@@ -849,6 +849,7 @@ export class CreationOrchestrator {
       const characters = await characterGenerator.generateCharacters(
         context,
         characterCount,
+        session.userId || "",
         {
           temperature: options?.temperature,
           modelId: options?.modelId,
@@ -939,6 +940,7 @@ export class CreationOrchestrator {
     const worldSetting = await worldGenerator.generateWorld(
       context.genre,
       context,
+      session.userId || "",
       {
         temperature: options?.temperature,
         modelId: options?.modelId,
@@ -1004,7 +1006,7 @@ export class CreationOrchestrator {
     const worldData = stepResults.world?.data || {};
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(session.userId || "system");
     let selectedModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     // If options.modelId is provided, try to find that specific model
@@ -1335,6 +1337,7 @@ ${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
       const result = await retryWithBackoff(async () => {
         return await enhancedProjectCreationService.createProjectFromSeed(
           seed,
+          userId || "system",
           (step, status, message, progress) => {
             onProgress?.(step, 20 + progress * 0.6, message);
           }

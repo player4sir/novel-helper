@@ -4,9 +4,21 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Users table - for authentication and multi-tenancy
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(), // Hashed password
+  role: text("role").default("user"), // 'admin' | 'user'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+
+
 // Projects table - stores novel project information
 export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }), // Link to owner
   title: text("title").notNull(),
   genre: text("genre").notNull(), // 玄幻、都市、科幻、历史、言情等
   style: text("style"), // 写作风格
@@ -173,6 +185,7 @@ export const worldSettings = pgTable("world_settings", {
 // AI Models configuration table
 export const aiModels = pgTable("ai_models", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }), // Link to owner (null for system/global models)
   name: text("name").notNull(),
   provider: text("provider").notNull(), // openai, anthropic, deepseek, zhipu, qwen, moonshot, baichuan, custom
   modelType: text("model_type").notNull(), // chat, embedding
@@ -195,6 +208,7 @@ export const aiModels = pgTable("ai_models", {
 // Prompt templates table
 export const promptTemplates = pgTable("prompt_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }), // Link to owner
   projectId: varchar("project_id").references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   category: text("category").notNull(), // continue(续写), rewrite(改写), dialogue(对话), plot(情节), outline(大纲)
@@ -466,7 +480,7 @@ export const userFeedback = pgTable("user_feedback", {
 // User Preferences table - stores analyzed user preferences
 export const userPreferences = pgTable("user_preferences", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().unique(),
+  userId: varchar("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
   favoriteGenres: text("favorite_genres").array().notNull().default(sql`ARRAY[]::text[]`),
   favoriteStyles: text("favorite_styles").array().notNull().default(sql`ARRAY[]::text[]`),
   characterPreferences: jsonb("character_preferences").notNull().default(sql`'{}'`),
@@ -702,6 +716,13 @@ export const systemConfig = pgTable("system_config", {
 });
 
 // Insert schemas
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
 export const insertProjectSchema = createInsertSchema(projects).omit({
   id: true,
   createdAt: true,

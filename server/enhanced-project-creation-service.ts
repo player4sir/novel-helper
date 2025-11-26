@@ -159,6 +159,7 @@ export class EnhancedProjectCreationService {
    */
   async createProjectFromSeed(
     seed: ProjectSeed,
+    userId: string,
     onProgress?: (step: string, status: string, message: string, progress: number, metadata?: any) => void
   ): Promise<{
     projectId: string;
@@ -177,7 +178,7 @@ export class EnhancedProjectCreationService {
 
       try {
         // Check if embedding model is available
-        const models = await storage.getAIModels();
+        const models = await storage.getAIModels(userId);
         const embeddingModel = models.find(
           (m) => m.modelType === "embedding" && m.isActive && m.isDefaultEmbedding
         );
@@ -238,7 +239,7 @@ export class EnhancedProjectCreationService {
       onProgress?.("routing", "completed", `已选择: ${routing.primaryModel}`, 15);
 
       // Fetch actual model objects
-      const allModels = await storage.getAIModels();
+      const allModels = await storage.getAIModels(userId);
       const primaryModelObj = allModels.find(m => m.id === routing.primaryModel || m.modelId === routing.primaryModel);
       const fallbackModelObj = routing.fallbackModel ? allModels.find(m => m.id === routing.fallbackModel || m.modelId === routing.fallbackModel) : undefined;
 
@@ -280,11 +281,11 @@ export class EnhancedProjectCreationService {
 
       // Step 5: Score candidates (rule-based + semantic)
       onProgress?.("score", "running", "评分候选方案...", 70);
-      const scoredCandidates = await this.scoreCandidates(candidates);
+      const scoredCandidates = await this.scoreCandidates(candidates, userId);
       onProgress?.("score", "running", "合并最佳方案...", 75);
 
       // Step 6: Merge best candidates
-      const mergedMeta = await this.mergeCandidatesIntelligently(scoredCandidates, seed);
+      const mergedMeta = await this.mergeCandidatesIntelligently(scoredCandidates, seed, userId);
       onProgress?.("score", "running", "验证质量...", 75);
 
       // Step 6.5: Validate merged result with enhanced quality evaluation
@@ -316,6 +317,7 @@ export class EnhancedProjectCreationService {
       // Step 7: Create project in database
       onProgress?.("save", "running", "保存项目信息...", 85);
       const project = await storage.createProject({
+        userId,
         title: mergedMeta.title,
         genre: seed.genre || this.inferGenre(mergedMeta),
         style: seed.style || mergedMeta.toneProfile,
@@ -442,6 +444,7 @@ export class EnhancedProjectCreationService {
    */
   async generateBasicInfo(
     seed: ProjectSeed,
+    userId: string,
     options?: { modelId?: string; temperature?: number }
   ): Promise<Partial<ProjectMeta>> {
     const genre = seed.genre || "未指定";
@@ -507,7 +510,7 @@ ${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
     let apiKey = "";
 
     if (!modelId) {
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
       if (defaultModel) {
         modelId = defaultModel.modelId;
@@ -519,7 +522,7 @@ ${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
       }
     } else {
       // Look up provider for provided modelId
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const model = models.find(m => m.modelId === modelId);
       if (model) {
         provider = model.provider;
@@ -897,12 +900,13 @@ ${genreInstructions ? `## 类型特定要求\n${genreInstructions}` : ''}`,
    * Score candidates using advanced multi-dimensional scoring
    */
   private async scoreCandidates(
-    candidates: ProjectMeta[]
+    candidates: ProjectMeta[],
+    userId: string
   ): Promise<ScoredCandidate[]> {
     const scored: ScoredCandidate[] = [];
 
     // Get embedding model for semantic scoring
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     const embeddingModel = models.find(
       (m) => m.modelType === "embedding" && m.isActive && m.isDefaultEmbedding
     );
@@ -913,7 +917,7 @@ ${genreInstructions ? `## 类型特定要求\n${genreInstructions}` : ''}`,
       if (embeddingModel) {
         try {
           const textForEmbedding = `${candidate.title} ${candidate.premise} ${candidate.themeTags.join(" ")}`;
-          const result = await aiService.getEmbedding(textForEmbedding);
+          const result = await aiService.getEmbedding(textForEmbedding, userId);
           if (result) {
             embedding = result;
           }
@@ -1352,12 +1356,13 @@ ${genreInstructions ? `## 类型特定要求\n${genreInstructions}` : ''}`,
   }
 
   /**
-   * Merge best candidates intelligently using LLM to create optimal ProjectMeta
+   * Intelligent candidate merging using LLM
    */
-  /**
-   * Merge best candidates intelligently using LLM to create optimal ProjectMeta
-   */
-  private async mergeCandidatesIntelligently(scored: ScoredCandidate[], seed: ProjectSeed): Promise<ProjectMeta> {
+  private async mergeCandidatesIntelligently(
+    scored: ScoredCandidate[],
+    seed: ProjectSeed,
+    userId: string
+  ): Promise<ProjectMeta> {
     if (scored.length === 1) {
       return scored[0].candidate;
     }
@@ -1366,7 +1371,6 @@ ${genreInstructions ? `## 类型特定要求\n${genreInstructions}` : ''}`,
 
     // If we don't have enough candidates or if we want to save costs/time, 
     // we could fallback to heuristic merging. But for "Intelligent" strategy, we use LLM.
-
     const candidatesJson = topCandidates.map((c, index) => ({
       id: index + 1,
       score: c.totalScore,
@@ -1439,7 +1443,7 @@ ${JSON.stringify(candidatesJson, null, 2)}
       const decision = await modelRoutingService.routeModel(signals);
 
       // Get actual model object from database
-      const allModels = await storage.getAIModels();
+      const allModels = await storage.getAIModels(userId);
       const selectedModel = allModels.find(m =>
         m.id === decision.primaryModel || m.modelId === decision.primaryModel
       );

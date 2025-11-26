@@ -9,9 +9,9 @@ import {
   BarChart3,
   FileText,
   Sparkles,
-  TrendingUp,
   Database,
-  Layout,
+  LogOut,
+  User,
 } from "lucide-react";
 import {
   Sidebar,
@@ -25,6 +25,17 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import { useAuth } from "@/hooks/use-auth";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const mainItems = [
   { title: "项目概览", url: "/", icon: Home, testId: "link-dashboard" },
@@ -50,6 +61,7 @@ const toolsItems = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { user, logoutMutation } = useAuth();
 
   return (
     <Sidebar>
@@ -120,9 +132,38 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-4">
-        <p className="text-xs text-muted-foreground text-center">
-          番茄小说专业创作系统
-        </p>
+        {user ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="w-full justify-start px-2">
+                <Avatar className="h-6 w-6 mr-2">
+                  <AvatarImage src={`https://avatar.vercel.sh/${user.username}`} />
+                  <AvatarFallback>{user.username[0].toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <span className="truncate">{user.username}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56" align="end" forceMount>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium leading-none">{user.username}</p>
+                  <p className="text-xs leading-none text-muted-foreground">
+                    {user.role === 'admin' ? '管理员' : '普通用户'}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => logoutMutation.mutate()}>
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>退出登录</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <p className="text-xs text-muted-foreground text-center">
+            未登录
+          </p>
+        )}
       </SidebarFooter>
     </Sidebar>
   );

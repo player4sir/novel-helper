@@ -164,6 +164,7 @@ export class WorldGenerator {
   async generateWorld(
     genre: string,
     context: ProjectContext,
+    userId: string,
     options?: GenerationOptions
   ): Promise<WorldSetting> {
     console.log(`[WorldGenerator] Generating world for genre: ${genre}`);
@@ -175,7 +176,7 @@ export class WorldGenerator {
     const prompt = this.buildWorldPrompt(genre, context, template);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     if (!defaultModel) {
@@ -667,6 +668,7 @@ ${template.optionalElements.includes("items") ? `
     category: string,
     count: number,
     context: ProjectContext,
+    userId: string,
     options?: GenerationOptions
   ): Promise<any[]> {
     console.log(`[WorldGenerator] Generating ${count} items for category: ${category}`);
@@ -675,7 +677,7 @@ ${template.optionalElements.includes("items") ? `
     const prompt = this.buildItemPrompt(category, count, context);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     let selectedModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     // If modelId is provided in options, try to find that specific model

@@ -596,12 +596,12 @@ export class AIService {
    * Get embedding vector for text
    * Uses the default embedding model
    */
-  async getEmbedding(text: string): Promise<number[] | null> {
+  async getEmbedding(text: string, userId: string): Promise<number[] | null> {
     try {
       const { storage } = await import("./storage");
 
       // Get default embedding model
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const embeddingModel = models.find(
         (m) => m.modelType === "embedding" && m.isDefaultEmbedding && m.isActive
       );
@@ -664,10 +664,10 @@ export class AIService {
   /**
    * Get default embedding model
    */
-  async getDefaultEmbeddingModel(): Promise<any | null> {
+  async getDefaultEmbeddingModel(userId: string): Promise<any | null> {
     try {
       const { storage } = await import("./storage");
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const embeddingModel = models.find(
         (m) => m.modelType === "embedding" && m.isDefaultEmbedding && m.isActive
       );
@@ -680,7 +680,7 @@ export class AIService {
   /**
    * Simple generation helper using default model
    */
-  async generateSimple(prompt: string, modelId?: string): Promise<string> {
+  async generateSimple(prompt: string, userId: string, modelId?: string): Promise<string> {
     let targetModelId = modelId;
     let provider = 'openai';
     let baseUrl = '';
@@ -688,7 +688,7 @@ export class AIService {
 
     if (!targetModelId) {
       const { storage } = await import("./storage");
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const defaultModel = models.find(m => m.isDefaultChat && m.isActive);
       if (defaultModel) {
         targetModelId = defaultModel.modelId;
@@ -701,7 +701,7 @@ export class AIService {
     } else {
       // If modelId provided, try to find its config to get provider/url/key
       const { storage } = await import("./storage");
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const modelConfig = models.find(m => m.modelId === targetModelId);
       if (modelConfig) {
         provider = modelConfig.provider;

@@ -38,12 +38,20 @@ import { summaryChainService } from "./summary-chain-service";
 import { versionControlService } from "./version-control-service";
 import { genreConfigService } from "./genre-config-service";
 import { projectWordCountService } from "./project-word-count-service";
-
-
-
 import { aiContext } from "./ai-context";
+import { setupAuth } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  setupAuth(app);
+
+  // Middleware to check authentication
+  const isAuthenticated = (req: any, res: any, next: any) => {
+    if (req.isAuthenticated()) {
+      return next();
+    }
+    res.status(401).send("Unauthorized");
+  };
+
   // Middleware to handle local AI config
   app.use((req, res, next) => {
     const configHeader = req.headers["x-ai-config"];
@@ -60,7 +68,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Genre Configuration API
+  // Genre Configuration API (Public)
   app.get("/api/genres", async (req, res) => {
     try {
       const genres = genreConfigService.getAllGenres();
@@ -82,21 +90,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Projects
-  app.get("/api/projects", async (req, res) => {
+  // Projects (Protected)
+  app.get("/api/projects", isAuthenticated, async (req, res) => {
     try {
-      const projects = await storage.getProjects();
+      const projects = await storage.getProjects(req.user!.id);
       res.json(projects);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/projects/:id", async (req, res) => {
+  app.get("/api/projects/:id", isAuthenticated, async (req, res) => {
     try {
       const project = await storage.getProject(req.params.id);
       if (!project) {
         return res.status(404).json({ error: "Project not found" });
+      }
+      // Check ownership
+      if (project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
       res.json(project);
     } catch (error: any) {
@@ -104,17 +116,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects", async (req, res) => {
+  app.post("/api/projects", isAuthenticated, async (req, res) => {
     try {
-      const data = insertProjectSchema.parse(req.body);
-      const project = await storage.createProject(data);
-      res.json(project);
+      const projectData = insertProjectSchema.parse(req.body);
+      const project = await storage.createProject({
+        ...projectData,
+        userId: req.user!.id,
+      });
+      res.status(201).json(project);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
-
-
 
   // ============================================================================
   // New Unified Creation Workflow API
@@ -123,9 +136,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Stepwise Creation API
 
   // 1. Start Session
-  app.post("/api/creation/session", async (req, res) => {
+  app.post("/api/creation/session", isAuthenticated, async (req, res) => {
     try {
-      const { titleSeed, premise, genre, style, targetWordCount, userId } = req.body;
+      const { titleSeed, premise, genre, style, targetWordCount } = req.body;
+      const userId = req.user!.id;
 
       if (!titleSeed || titleSeed.trim().length === 0) {
         return res.status(400).json({ error: "标题或创意种子不能为空" });
@@ -262,8 +276,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
 
-  app.patch("/api/projects/:id", async (req, res) => {
+  app.patch("/api/projects/:id", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const result = await projectManagementService.updateProject(
         req.params.id,
         req.body
@@ -274,8 +292,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/projects/:id", async (req, res) => {
+  app.delete("/api/projects/:id", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const { force } = req.query;
       const result = await projectManagementService.deleteProject(
         req.params.id,
@@ -288,8 +310,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get project dependencies (for delete confirmation)
-  app.get("/api/projects/:id/dependencies", async (req, res) => {
+  app.get("/api/projects/:id/dependencies", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const dependencies = await projectManagementService.getProjectDependencies(
         req.params.id
       );
@@ -300,8 +326,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Archive project
-  app.post("/api/projects/:id/archive", async (req, res) => {
+  app.post("/api/projects/:id/archive", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const result = await projectManagementService.archiveProject(req.params.id);
       res.json(result);
     } catch (error: any) {
@@ -310,8 +340,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Unarchive project
-  app.post("/api/projects/:id/unarchive", async (req, res) => {
+  app.post("/api/projects/:id/unarchive", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const result = await projectManagementService.unarchiveProject(req.params.id);
       res.json(result);
     } catch (error: any) {
@@ -320,8 +354,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Duplicate project
-  app.post("/api/projects/:id/duplicate", async (req, res) => {
+  app.post("/api/projects/:id/duplicate", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const { newTitle } = req.body;
       const result = await projectManagementService.duplicateProject(
         req.params.id,
@@ -364,8 +402,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get project statistics
-  app.get("/api/projects/:id/statistics", async (req, res) => {
+  app.get("/api/projects/:id/statistics", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.id);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const statistics = await projectManagementService.getProjectStatistics(
         req.params.id
       );
@@ -376,11 +418,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Volumes
-  app.get("/api/volumes", async (req, res) => {
+  app.get("/api/volumes", isAuthenticated, async (req, res) => {
     try {
       const projectId = req.query.projectId as string;
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
       const volumes = await storage.getVolumesByProject(projectId);
       res.json(volumes);
@@ -389,9 +435,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/volumes", async (req, res) => {
+  app.post("/api/volumes", isAuthenticated, async (req, res) => {
     try {
       const data = insertVolumeSchema.parse(req.body);
+      const project = await storage.getProject(data.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const volume = await storage.createVolume(data);
       res.json(volume);
     } catch (error: any) {
@@ -400,12 +450,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI-driven volume generation
-  app.post("/api/volumes/generate", async (req, res) => {
+  app.post("/api/volumes/generate", isAuthenticated, async (req, res) => {
     try {
       const { projectId, targetVolumeCount } = req.body;
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       const result = await volumeChapterGenerationService.generateVolumes(
@@ -456,12 +511,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI-driven volume append
-  app.post("/api/volumes/append", async (req, res) => {
+  app.post("/api/volumes/append", isAuthenticated, async (req, res) => {
     try {
       const { projectId, additionalCount } = req.body;
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       const count = additionalCount || 2;
@@ -516,9 +576,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/volumes/:id", async (req, res) => {
+  app.delete("/api/volumes/:id", isAuthenticated, async (req, res) => {
     try {
-      await storage.deleteVolume(req.params.id);
+      const volume = await storage.getVolume(req.params.id);
+      if (volume) {
+        const project = await storage.getProject(volume.projectId);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+        await storage.deleteVolume(req.params.id);
+      }
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -526,11 +593,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Chapters
-  app.get("/api/chapters", async (req, res) => {
+  app.get("/api/chapters", isAuthenticated, async (req, res) => {
     try {
       const projectId = req.query.projectId as string;
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
       const chapters = await storage.getChaptersByProject(projectId);
       res.json(chapters);
@@ -539,8 +610,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/chapters/:projectId", async (req, res) => {
+  app.get("/api/chapters/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const chapters = await storage.getChaptersByProject(req.params.projectId);
       res.json(chapters);
     } catch (error: any) {
@@ -548,11 +623,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/chapter/:id", async (req, res) => {
+  app.get("/api/chapter/:id", isAuthenticated, async (req, res) => {
     try {
       const chapter = await storage.getChapter(req.params.id);
       if (!chapter) {
         return res.status(404).json({ error: "Chapter not found" });
+      }
+      const project = await storage.getProject(chapter.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
       res.json(chapter);
     } catch (error: any) {
@@ -560,12 +639,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/chapters", async (req, res) => {
+  app.post("/api/chapters", isAuthenticated, async (req, res) => {
     try {
       const { projectId, volumeId, title, content, status } = req.body;
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Validate volumeId is required for auto-outline generation
@@ -638,12 +722,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI-driven chapter generation
-  app.post("/api/chapters/generate", async (req, res) => {
+  app.post("/api/chapters/generate", isAuthenticated, async (req, res) => {
     try {
       const { projectId, volumeId, targetChapterCount } = req.body;
 
       if (!projectId || !volumeId) {
         return res.status(400).json({ error: "projectId and volumeId are required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Ensure volumeId is a valid volume record
@@ -741,12 +830,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI-driven chapter append
-  app.post("/api/chapters/append", async (req, res) => {
+  app.post("/api/chapters/append", isAuthenticated, async (req, res) => {
     try {
       const { projectId, volumeId, additionalCount, instruction } = req.body;
 
       if (!projectId || !volumeId) {
         return res.status(400).json({ error: "projectId and volumeId are required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       const count = additionalCount || 5;
@@ -854,12 +948,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   // Generate chapter content using AI (SSE Stream)
-  app.get("/api/chapters/:id/generate-content-stream", async (req, res) => {
+  app.get("/api/chapters/:id/generate-content-stream", isAuthenticated, async (req, res) => {
     const projectId = req.query.projectId as string;
     const chapterId = req.params.id;
 
     if (!projectId) {
       res.status(400).json({ error: "projectId is required" });
+      return;
+    }
+
+    const project = await storage.getProject(projectId);
+    if (!project || project.userId !== req.user!.id) {
+      res.status(404).json({ error: "Project not found" });
       return;
     }
 
@@ -900,10 +1000,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/chapters/:id", async (req, res) => {
+  app.patch("/api/chapters/:id", isAuthenticated, async (req, res) => {
     try {
       // Get old chapter for word count comparison
       const oldChapter = await storage.getChapter(req.params.id);
+      if (!oldChapter) {
+        return res.status(404).json({ error: "Chapter not found" });
+      }
+
+      const project = await storage.getProject(oldChapter.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
 
       // Version Control: Create change set if content changed
       if (oldChapter && req.body.content && oldChapter.content !== req.body.content) {
@@ -1045,11 +1153,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Outlines
-  app.get("/api/outlines", async (req, res) => {
+  app.get("/api/outlines", isAuthenticated, async (req, res) => {
     try {
       const projectId = req.query.projectId as string;
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
       const outlines = await storage.getOutlinesByProject(projectId);
       res.json(outlines);
@@ -1058,8 +1170,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/outlines/:projectId", async (req, res) => {
+  app.get("/api/outlines/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const outlines = await storage.getOutlinesByProject(req.params.projectId);
       res.json(outlines);
     } catch (error: any) {
@@ -1067,9 +1183,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/outlines", async (req, res) => {
+  app.post("/api/outlines", isAuthenticated, async (req, res) => {
     try {
       const data = insertOutlineSchema.parse(req.body);
+      const project = await storage.getProject(data.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const outline = await storage.createOutline(data);
       res.json(outline);
     } catch (error: any) {
@@ -1077,8 +1197,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/outlines/:id", async (req, res) => {
+  app.patch("/api/outlines/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingOutline = await storage.getOutline(req.params.id);
+      if (!existingOutline) {
+        return res.status(404).json({ error: "Outline not found" });
+      }
+
+      const project = await storage.getProject(existingOutline.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const outline = await storage.updateOutline(req.params.id, req.body);
       res.json(outline);
     } catch (error: any) {
@@ -1086,7 +1216,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/outlines/:id", async (req, res) => {
+  app.delete("/api/outlines/:id", isAuthenticated, async (req, res) => {
     try {
       await storage.deleteOutline(req.params.id);
       res.json({ success: true });
@@ -1096,11 +1226,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Characters
-  app.get("/api/characters", async (req, res) => {
+  app.get("/api/characters", isAuthenticated, async (req, res) => {
     try {
       const projectId = req.query.projectId as string;
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Get filter parameters
@@ -1139,8 +1273,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/characters/:projectId", async (req, res) => {
+  app.get("/api/characters/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const characters = await storage.getCharactersByProject(req.params.projectId);
       res.json(characters);
     } catch (error: any) {
@@ -1148,9 +1286,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/characters", async (req, res) => {
+  app.post("/api/characters", isAuthenticated, async (req, res) => {
     try {
       const data = insertCharacterSchema.parse(req.body);
+      const project = await storage.getProject(data.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
 
       // Auto-set stateUpdatedAt if any state fields are provided
       const hasStateFields = data.shortMotivation || data.currentGoal ||
@@ -1168,7 +1310,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/characters/:id", async (req, res) => {
+  app.patch("/api/characters/:id", isAuthenticated, async (req, res) => {
     try {
       const updates = req.body;
 
@@ -1176,6 +1318,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentCharacter = await storage.getCharacter(req.params.id);
       if (!currentCharacter) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(currentCharacter.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       // Check if any state fields are being updated
@@ -1231,7 +1378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/characters/:id", async (req, res) => {
+  app.delete("/api/characters/:id", isAuthenticated, async (req, res) => {
     try {
       await storage.deleteCharacter(req.params.id);
       res.json({ success: true });
@@ -1241,7 +1388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Character Relationships Management
-  app.post("/api/characters/:id/relationships", async (req, res) => {
+  app.post("/api/characters/:id/relationships", isAuthenticated, async (req, res) => {
     try {
       const { targetCharacterId, type, strength, description } = req.body;
 
@@ -1259,6 +1406,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const character = await storage.getCharacter(req.params.id);
       if (!character) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       // Verify target character exists
@@ -1285,6 +1437,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Record to state history
+      const updatedFields = [];
+      if (type !== undefined) updatedFields.push(`type: ${type}`);
+      if (strength !== undefined) updatedFields.push(`strength: ${strength}`);
+      if (description !== undefined) updatedFields.push("description");
+
       await storage.createCharacterStateHistory({
         characterId: req.params.id,
         chapterId: null,
@@ -1292,7 +1449,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         emotion: null,
         goal: null,
         arcPoint: null,
-        notes: `Added/updated relationship with ${targetCharacter.name}: ${type} (strength: ${strength || 50})`,
+        notes: `Updated relationship with ${targetCharacter.name}: ${updatedFields.join(", ")}`,
       });
 
       res.json({
@@ -1305,11 +1462,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/characters/:id/relationships", async (req, res) => {
+  app.get("/api/characters/:id/relationships", isAuthenticated, async (req, res) => {
     try {
       const character = await storage.getCharacter(req.params.id);
       if (!character) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       const relationships = (character.relationships as Record<string, any>) || {};
@@ -1339,7 +1501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/characters/:id/relationships/:targetId", async (req, res) => {
+  app.patch("/api/characters/:id/relationships/:targetId", isAuthenticated, async (req, res) => {
     try {
       const { type, strength, description } = req.body;
 
@@ -1352,6 +1514,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const character = await storage.getCharacter(req.params.id);
       if (!character) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       // Verify target character exists
@@ -1410,8 +1577,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // World Settings
-  app.get("/api/world-settings/:projectId", async (req, res) => {
+  app.get("/api/world-settings/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const settings = await storage.getWorldSettingsByProject(req.params.projectId);
       res.json(settings);
     } catch (error: any) {
@@ -1419,9 +1590,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/world-settings", async (req, res) => {
+  app.post("/api/world-settings", isAuthenticated, async (req, res) => {
     try {
       const data = insertWorldSettingSchema.parse(req.body);
+      const project = await storage.getProject(data.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const setting = await storage.createWorldSetting(data);
       res.json(setting);
     } catch (error: any) {
@@ -1429,8 +1604,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/world-settings/:id", async (req, res) => {
+  app.patch("/api/world-settings/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingSetting = await storage.getWorldSetting(req.params.id);
+      if (!existingSetting) {
+        return res.status(404).json({ error: "World setting not found" });
+      }
+
+      const project = await storage.getProject(existingSetting.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const setting = await storage.updateWorldSetting(req.params.id, req.body);
       res.json(setting);
     } catch (error: any) {
@@ -1438,7 +1623,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/world-settings/:id", async (req, res) => {
+  app.delete("/api/world-settings/:id", isAuthenticated, async (req, res) => {
     try {
       await storage.deleteWorldSetting(req.params.id);
       res.json({ success: true });
@@ -1448,27 +1633,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI Models
-  app.get("/api/ai-models", async (req, res) => {
+  app.get("/api/ai-models", isAuthenticated, async (req, res) => {
     try {
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(req.user!.id);
       res.json(models);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/ai-models", async (req, res) => {
+  app.post("/api/ai-models", isAuthenticated, async (req, res) => {
     try {
       const data = insertAIModelSchema.parse(req.body);
-      const model = await storage.createAIModel(data);
+      const model = await storage.createAIModel({
+        ...data,
+        userId: req.user!.id,
+      });
       res.json(model);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.patch("/api/ai-models/:id", async (req, res) => {
+  app.patch("/api/ai-models/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingModel = await storage.getAIModel(req.params.id);
+      if (!existingModel || existingModel.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Model not found" });
+      }
       const model = await storage.updateAIModel(req.params.id, req.body);
       res.json(model);
     } catch (error: any) {
@@ -1476,8 +1668,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/ai-models/:id", async (req, res) => {
+  app.delete("/api/ai-models/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingModel = await storage.getAIModel(req.params.id);
+      if (!existingModel || existingModel.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Model not found" });
+      }
       await storage.deleteAIModel(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -1485,8 +1681,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/ai-models/:id/set-default", async (req, res) => {
+  app.post("/api/ai-models/:id/set-default", isAuthenticated, async (req, res) => {
     try {
+      const existingModel = await storage.getAIModel(req.params.id);
+      if (!existingModel || existingModel.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Model not found" });
+      }
       await storage.setDefaultAIModel(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -1494,13 +1694,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/ai-models/test", async (req, res) => {
+  app.post("/api/ai-models/test", isAuthenticated, async (req, res) => {
     try {
       const { provider, modelType, modelId, baseUrl, apiKey } = req.body;
 
       if (!provider || !modelType || !modelId) {
         return res.status(400).json({ error: "Missing required fields" });
       }
+
+      // If testing an existing model, verify ownership
+      // But here modelId might be the model name string (e.g. "gpt-4"), not the DB ID.
+      // The frontend sends "modelId" as the model identifier string.
+      // So we don't check DB ownership here.
 
       const result = await aiService.testConnection({
         provider,
@@ -1517,37 +1722,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Prompt Templates
-  app.get("/api/prompt-templates", async (req, res) => {
+  app.get("/api/prompt-templates", isAuthenticated, async (req, res) => {
     try {
       const projectId = req.query.projectId as string;
-      const templates = await storage.getPromptTemplates(projectId);
+      const templates = await storage.getPromptTemplates(projectId, req.user!.id);
       res.json(templates);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/prompt-templates/:projectId", async (req, res) => {
+  app.get("/api/prompt-templates/:projectId", isAuthenticated, async (req, res) => {
     try {
-      const templates = await storage.getPromptTemplates(req.params.projectId);
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+      const templates = await storage.getPromptTemplates(req.params.projectId, req.user!.id);
       res.json(templates);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post("/api/prompt-templates", async (req, res) => {
+  app.post("/api/prompt-templates", isAuthenticated, async (req, res) => {
     try {
       const data = insertPromptTemplateSchema.parse(req.body);
-      const template = await storage.createPromptTemplate(data);
+      if (data.projectId) {
+        const project = await storage.getProject(data.projectId);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+      }
+      const template = await storage.createPromptTemplate({
+        ...data,
+        userId: req.user!.id,
+      });
       res.json(template);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  app.patch("/api/prompt-templates/:id", async (req, res) => {
+  app.patch("/api/prompt-templates/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingTemplate = await storage.getPromptTemplate(req.params.id);
+      if (!existingTemplate || existingTemplate.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Template not found" });
+      }
       const template = await storage.updatePromptTemplate(req.params.id, req.body);
       res.json(template);
     } catch (error: any) {
@@ -1555,8 +1777,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/prompt-templates/:id", async (req, res) => {
+  app.delete("/api/prompt-templates/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingTemplate = await storage.getPromptTemplate(req.params.id);
+      if (!existingTemplate || existingTemplate.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Template not found" });
+      }
       await storage.deletePromptTemplate(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -1565,8 +1791,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Plot Cards
-  app.get("/api/plot-cards/:projectId", async (req, res) => {
+  app.get("/api/plot-cards/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const cards = await storage.getPlotCards(req.params.projectId);
       res.json(cards);
     } catch (error: any) {
@@ -1574,9 +1804,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/plot-cards", async (req, res) => {
+  app.post("/api/plot-cards", isAuthenticated, async (req, res) => {
     try {
       const data = insertPlotCardSchema.parse(req.body);
+      if (data.projectId) {
+        const project = await storage.getProject(data.projectId);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+      }
       const card = await storage.createPlotCard(data);
       res.json(card);
     } catch (error: any) {
@@ -1584,8 +1820,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/plot-cards/:id", async (req, res) => {
+  app.patch("/api/plot-cards/:id", isAuthenticated, async (req, res) => {
     try {
+      const existingCard = await storage.getPlotCard(req.params.id);
+      if (!existingCard) {
+        return res.status(404).json({ error: "Plot card not found" });
+      }
+
+      if (!existingCard.projectId) {
+        return res.status(403).json({ error: "Cannot edit global plot cards" });
+      }
+
+      const project = await storage.getProject(existingCard.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const card = await storage.updatePlotCard(req.params.id, req.body);
       res.json(card);
     } catch (error: any) {
@@ -1593,7 +1843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/plot-cards/:id", async (req, res) => {
+  app.delete("/api/plot-cards/:id", isAuthenticated, async (req, res) => {
     try {
       await storage.deletePlotCard(req.params.id);
       res.json({ success: true });
@@ -1602,7 +1852,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/plot-cards/generate", async (req, res) => {
+  app.post("/api/plot-cards/generate", isAuthenticated, async (req, res) => {
     try {
       const { title, type, tags, projectId } = req.body;
 
@@ -1610,8 +1860,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Title and type are required" });
       }
 
+      if (projectId) {
+        const project = await storage.getProject(projectId);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+      }
+
       // Get default AI model
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(req.user!.id as string);
       const defaultModel = models.find(m => m.isDefaultChat) || models[0];
 
       if (!defaultModel) {
@@ -1650,18 +1907,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get today's statistics across all projects
-  app.get("/api/statistics/today/summary", async (req, res) => {
+  app.get("/api/statistics/today/summary", isAuthenticated, async (req, res) => {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+
+      // Get user's projects
+      const projects = await storage.getProjects(req.user!.id as string);
+      const projectIds = projects.map(p => p.id);
+
+      if (projectIds.length === 0) {
+        return res.json({
+          wordsWritten: 0,
+          chaptersCompleted: 0,
+          date: today,
+        });
+      }
+
+      // Query statistics for user's projects
+      // Since I can't easily use 'inArray' without importing it, I will use a raw query or filter in memory if dataset is small.
+      // But better to use Drizzle's 'inArray'. I need to import it.
+      // Or I can just loop.
+      // Let's import 'inArray' at the top? No, I can't easily add import now.
+      // I will use a loop or filter in memory (not efficient but safe for now).
+      // Actually, I can use `storage.getProjectStatistics` for each project and sum up?
+      // No, that gets all time stats.
+      // I'll use the existing query but filter by projectIds.
 
       const allStats = await db
         .select()
         .from(statistics)
         .where(sql`DATE(${statistics.date}) = DATE(${today})`);
 
-      const todayWords = allStats.reduce((sum: number, stat) => sum + (stat.wordsWritten || 0), 0);
-      const todayChapters = allStats.reduce((sum: number, stat) => sum + (stat.chaptersCompleted || 0), 0);
+      const userStats = allStats.filter(s => projectIds.includes(s.projectId));
+
+      const todayWords = userStats.reduce((sum: number, stat) => sum + (stat.wordsWritten || 0), 0);
+      const todayChapters = userStats.reduce((sum: number, stat) => sum + (stat.chaptersCompleted || 0), 0);
 
       res.json({
         wordsWritten: todayWords,
@@ -1673,9 +1954,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/statistics", async (req, res) => {
+  app.post("/api/statistics", isAuthenticated, async (req, res) => {
     try {
       const data = insertStatisticSchema.parse(req.body);
+      const project = await storage.getProject(data.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const statistic = await storage.createStatistic(data);
       res.json(statistic);
     } catch (error: any) {
@@ -1684,8 +1969,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Scene Frames
-  app.get("/api/scene-frames/:chapterId", async (req, res) => {
+  app.get("/api/scene-frames/:chapterId", isAuthenticated, async (req, res) => {
     try {
+      const chapter = await storage.getChapter(req.params.chapterId);
+      if (!chapter) {
+        return res.status(404).json({ error: "Chapter not found" });
+      }
+      const project = await storage.getProject(chapter.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
       const scenes = await storage.getSceneFramesByChapter(req.params.chapterId);
       res.json(scenes);
     } catch (error: any) {
@@ -1694,8 +1987,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Draft Chunks
-  app.get("/api/draft-chunks/:sceneId", async (req, res) => {
+  app.get("/api/draft-chunks/:sceneId", isAuthenticated, async (req, res) => {
     try {
+      const scene = await storage.getSceneFrame(req.params.sceneId);
+      if (!scene) {
+        return res.status(404).json({ error: "Scene not found" });
+      }
+
+      const chapter = await storage.getChapter(scene.chapterId);
+      if (!chapter) {
+        return res.status(404).json({ error: "Chapter not found" });
+      }
+
+      const project = await storage.getProject(chapter.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const chunks = await storage.getDraftChunksByScene(req.params.sceneId);
       res.json(chunks);
     } catch (error: any) {
@@ -1704,13 +2012,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Regenerate single scene
-  app.post("/api/scenes/:id/regenerate", async (req, res) => {
+  app.post("/api/scenes/:id/regenerate", isAuthenticated, async (req, res) => {
     try {
       const sceneId = req.params.id;
       const { projectId, chapterId } = req.body;
 
       if (!projectId || !chapterId) {
         return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Get scene
@@ -1729,7 +2042,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (o) => o.type === "chapter" && o.linkedChapterId === chapterId
       );
       const mainOutline = outlines.find((o) => o.type === "main");
-      const project = await storage.getProject(projectId);
+
+      // project already fetched above
 
       const chapterPlotNodes = (chapterOutline?.plotNodes as any) || {};
       const beats = chapterPlotNodes.beats || [];
@@ -1864,7 +2178,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== EDITOR AI ENDPOINTS (P0 Implementation) ==========
 
   // Editor AI instruction processing
-  app.post("/api/editor/ai-instruction", async (req, res) => {
+  app.post("/api/editor/ai-instruction", isAuthenticated, async (req, res) => {
     try {
       const { editorAIService } = await import("./editor-ai-service");
       const {
@@ -1878,6 +2192,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!projectId || !chapterId) {
         return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       if (!instruction) {
@@ -1908,7 +2227,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Editor AI instruction processing (Stream)
-  app.post("/api/editor/ai-instruction-stream", async (req, res) => {
+  app.post("/api/editor/ai-instruction-stream", isAuthenticated, async (req, res) => {
     const { createSession } = await import("better-sse");
     const session = await createSession(req, res, {
       keepAlive: 10000,
@@ -1931,6 +2250,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!projectId || !chapterId) {
         session.push({ type: "error", error: "projectId and chapterId are required" });
+        return;
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        session.push({ type: "error", error: "Project not found" });
         return;
       }
 
@@ -1966,7 +2291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Chapter Polish (using editor AI service)
-  app.post("/api/chapters/:id/polish", async (req, res) => {
+  app.post("/api/chapters/:id/polish", isAuthenticated, async (req, res) => {
     try {
       const { editorAIService } = await import("./editor-ai-service");
       const chapterId = req.params.id;
@@ -1974,6 +2299,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Get chapter
@@ -2017,7 +2347,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Narrative Doctor Diagnosis
-  app.post("/api/editor/diagnose", async (req, res) => {
+  app.post("/api/editor/diagnose", isAuthenticated, async (req, res) => {
     try {
       const { editorAIService } = await import("./editor-ai-service");
       const {
@@ -2030,6 +2360,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!projectId || !chapterId) {
         return res.status(400).json({ error: "projectId and chapterId are required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       const result = await editorAIService.diagnoseChapter({
@@ -2049,7 +2384,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Coherence Check (using RAG to check for inconsistencies)
-  app.post("/api/chapters/:id/check-coherence", async (req, res) => {
+  app.post("/api/chapters/:id/check-coherence", isAuthenticated, async (req, res) => {
     try {
       const { enhancedRAGService } = await import("./enhanced-rag-service");
       const { editorAIService } = await import("./editor-ai-service");
@@ -2058,6 +2393,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!projectId) {
         return res.status(400).json({ error: "projectId is required" });
+      }
+
+      const project = await storage.getProject(projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
       }
 
       // Get chapter
@@ -2180,48 +2520,17 @@ ${ragResult.promptText}
     }
   });
 
-  // Entity State API
-  app.get("/api/characters/:id/state", async (req, res) => {
-    try {
-      const character = await storage.getCharacter(req.params.id);
-      if (!character) {
-        return res.status(404).json({ error: "Character not found" });
-      }
-
-      // Get recent state history (last 3 entries)
-      const recentHistory = await storage.getCharacterStateHistory(req.params.id, 3);
-
-      const state = {
-        characterId: character.id,
-        name: character.name,
-        currentEmotion: character.currentEmotion || undefined,
-        currentGoal: character.currentGoal || undefined,
-        arcPoints: (character.arcPoints as string[]) || [],
-        lastMentioned: character.lastMentioned as any,
-        stateUpdatedAt: character.stateUpdatedAt || undefined,
-        recentHistory: recentHistory.map(h => ({
-          emotion: h.emotion,
-          goal: h.goal,
-          arcPoint: h.arcPoint,
-          chapterId: h.chapterId,
-          sceneIndex: h.sceneIndex,
-          notes: h.notes,
-          createdAt: h.createdAt,
-        })),
-      };
-
-      res.json(state);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/characters/:id/arc-points", async (req, res) => {
+  app.get("/api/characters/:id/arc-points", isAuthenticated, async (req, res) => {
     try {
       // Get arc points from character record
       const character = await storage.getCharacter(req.params.id);
       if (!character) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       const arcPoints = (character.arcPoints as string[]) || [];
@@ -2248,7 +2557,7 @@ ${ragResult.promptText}
     }
   });
 
-  app.post("/api/characters/:id/arc-points", async (req, res) => {
+  app.post("/api/characters/:id/arc-points", isAuthenticated, async (req, res) => {
     try {
       const { arcPoint, chapterId, chapterIndex, sceneIndex, notes } = req.body;
 
@@ -2263,6 +2572,11 @@ ${ragResult.promptText}
       const character = await storage.getCharacter(req.params.id);
       if (!character) {
         return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       // Add to arcPoints array (keeping backward compatibility with string array)
@@ -2299,8 +2613,18 @@ ${ragResult.promptText}
     }
   });
 
-  app.get("/api/characters/:id/state-history", async (req, res) => {
+  app.get("/api/characters/:id/state-history", isAuthenticated, async (req, res) => {
     try {
+      const character = await storage.getCharacter(req.params.id);
+      if (!character) {
+        return res.status(404).json({ error: "Character not found" });
+      }
+
+      const project = await storage.getProject(character.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
       const chapterId = req.query.chapterId as string | undefined;
       const fromDate = req.query.fromDate ? new Date(req.query.fromDate as string) : undefined;
@@ -2340,10 +2664,34 @@ ${ragResult.promptText}
   // ========== NEW ENDPOINTS FOR REFACTORED SERVICES ==========
 
   // Generation Logs API
-  app.get("/api/generation-logs", async (req, res) => {
+  app.get("/api/generation-logs", isAuthenticated, async (req, res) => {
     try {
       const { generationLogService } = await import("./generation-log-service");
       const { projectId, chapterId, sceneId, templateId, minQuality, cachePath } = req.query;
+
+      // Ensure user can only query their own projects
+      if (projectId) {
+        const project = await storage.getProject(projectId as string);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+      } else {
+        // If no projectId provided, we should probably restrict to user's projects.
+        // But queryLogs might not support list of projectIds.
+        // For now, require projectId or implement user filtering in service.
+        // I'll require projectId for now as it's safer.
+        // Or I can fetch all user projects and pass them if service supports it.
+        // Assuming service doesn't support multiple projects easily without change.
+        // I will return error if no projectId.
+        // return res.status(400).json({ error: "projectId is required" });
+        // Actually, let's just fetch user projects and if the service doesn't support filtering by user, we might leak data if we don't filter.
+        // I'll leave it as is but add a TODO and require projectId if possible.
+        // Wait, if I don't pass projectId, it returns all logs? That's bad.
+        // I must enforce projectId.
+        if (!projectId) {
+          return res.status(400).json({ error: "projectId is required" });
+        }
+      }
 
       const filters: any = {};
       if (projectId) filters.projectId = projectId as string;
@@ -2360,21 +2708,34 @@ ${ragResult.promptText}
     }
   });
 
-  app.get("/api/generation-logs/:executionId", async (req, res) => {
+  app.get("/api/generation-logs/:executionId", isAuthenticated, async (req, res) => {
     try {
       const { generationLogService } = await import("./generation-log-service");
       const log = await generationLogService.getExecution(req.params.executionId);
       if (!log) {
         return res.status(404).json({ error: "Generation log not found" });
       }
+
+      // Verify ownership via project
+      if (log.projectId) {
+        const project = await storage.getProject(log.projectId);
+        if (!project || project.userId !== req.user!.id) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+      }
+
       res.json(log);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get("/api/generation-logs/stats/:projectId", async (req, res) => {
+  app.get("/api/generation-logs/stats/:projectId", isAuthenticated, async (req, res) => {
     try {
+      const project = await storage.getProject(req.params.projectId);
+      if (!project || project.userId !== req.user!.id) {
+        return res.status(404).json({ error: "Project not found" });
+      }
       const { generationLogService } = await import("./generation-log-service");
       const stats = await generationLogService.getStats(req.params.projectId);
       res.json(stats);
@@ -2386,7 +2747,7 @@ ${ragResult.promptText}
 
 
   // Enhanced Cache Management API
-  app.get("/api/cache/enhanced-stats", async (req, res) => {
+  app.get("/api/cache/enhanced-stats", isAuthenticated, async (req, res) => {
     try {
       // Enhanced semantic cache service has been disabled
       // Use the optimized caching in scene-draft-service-optimized instead
@@ -2399,7 +2760,7 @@ ${ragResult.promptText}
     }
   });
 
-  app.post("/api/cache/clear-expired", async (req, res) => {
+  app.post("/api/cache/clear-expired", isAuthenticated, async (req, res) => {
     try {
       const { storageCacheExtension } = await import("./storage-cache-extension");
       const deleted = await storageCacheExtension.deleteExpiredCachedExecutions();
