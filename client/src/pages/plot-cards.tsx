@@ -20,15 +20,23 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { apiRequest } from "@/lib/queryClient";
-import { insertPlotCardSchema, type Project, type PlotCard } from "@shared/schema";
-import { z } from "zod";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { insertPlotCardSchema } from "@shared/schema";
+import type { PlotCard, Project } from "@shared/schema";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const plotTypeConfig = {
@@ -63,7 +71,7 @@ export default function PlotCards() {
     queryKey: ["/api/plot-cards", selectedProjectId],
     queryFn: async () => {
       if (!selectedProjectId) return [];
-      const response = await fetch(`/api/plot-cards/${selectedProjectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/plot-cards/${selectedProjectId}`);
       if (!response.ok) throw new Error("Failed to fetch plot cards");
       return response.json();
     },

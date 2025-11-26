@@ -7,6 +7,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { useState } from "react";
 
 export interface EditorAIRequest {
@@ -104,7 +105,7 @@ export function useEditorAI() {
     ) => {
         setIsProcessing(true);
         try {
-            const response = await fetch("/api/editor/ai-instruction-stream", {
+            const response = await fetch(`${API_BASE_URL}/api/editor/ai-instruction-stream`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(request),

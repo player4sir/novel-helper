@@ -13,6 +13,7 @@ import {
   Users,
   Sparkles
 } from "lucide-react";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -56,7 +57,7 @@ export function ChapterSidebar({
   const { data: volumes } = useQuery<Volume[]>({
     queryKey: ["/api/volumes", projectId],
     queryFn: async () => {
-      const res = await fetch(`/api/volumes?projectId=${projectId}`);
+      const res = await fetch(`${API_BASE_URL}/api/volumes?projectId=${projectId}`);
       if (!res.ok) throw new Error("Failed to fetch volumes");
       return res.json();
     },
@@ -318,7 +319,7 @@ function ChapterItem({
   const { data: scenes } = useQuery<SceneFrame[]>({
     queryKey: ["/api/scene-frames", chapter.id],
     queryFn: async () => {
-      const res = await fetch(`/api/scene-frames/${chapter.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/scene-frames/${chapter.id}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -332,7 +333,7 @@ function ChapterItem({
 
       // Fetch drafts for all scenes
       const draftPromises = scenes.map(async (scene) => {
-        const res = await fetch(`/api/draft-chunks/${scene.id}`);
+        const res = await fetch(`${API_BASE_URL}/api/draft-chunks/${scene.id}`);
         if (!res.ok) return [];
         return res.json();
       });

@@ -16,6 +16,7 @@ import {
     Layers
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import type { PlotCard } from "@shared/schema";
 import { useState } from "react";
 
@@ -41,7 +42,7 @@ export function PlotCardsPanel({ projectId, onInsert }: PlotCardsPanelProps) {
         queryKey: ["/api/plot-cards", projectId],
         queryFn: async () => {
             if (!projectId) return [];
-            const response = await fetch(`/api/plot-cards/${projectId}`);
+            const response = await fetch(`${API_BASE_URL}/api/plot-cards/${projectId}`);
             if (!response.ok) throw new Error("Failed to fetch plot cards");
             return response.json();
         },

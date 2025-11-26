@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Trash2, Wand2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import {
     Dialog,
     DialogContent,
@@ -49,7 +50,7 @@ export function StyleLab({ projectId }: StyleLabProps) {
     const { data: styles, isLoading } = useQuery<StyleProfile[]>({
         queryKey: ["/api/styles", projectId],
         queryFn: async () => {
-            const res = await fetch(`/api/styles?projectId=${projectId}`);
+            const res = await fetch(`${API_BASE_URL}/api/styles?projectId=${projectId}`);
             if (!res.ok) throw new Error("Failed to fetch styles");
             return res.json();
         }
@@ -57,7 +58,7 @@ export function StyleLab({ projectId }: StyleLabProps) {
 
     const analyzeMutation = useMutation({
         mutationFn: async (text: string) => {
-            const res = await fetch("/api/styles/extract", {
+            const res = await fetch(`${API_BASE_URL}/api/styles/extract`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text }),
@@ -76,7 +77,7 @@ export function StyleLab({ projectId }: StyleLabProps) {
 
     const saveMutation = useMutation({
         mutationFn: async (data: any) => {
-            const res = await fetch("/api/styles", {
+            const res = await fetch(`${API_BASE_URL}/api/styles`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
@@ -99,7 +100,7 @@ export function StyleLab({ projectId }: StyleLabProps) {
 
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            const res = await fetch(`/api/styles/${id}`, {
+            const res = await fetch(`${API_BASE_URL}/api/styles/${id}`, {
                 method: "DELETE",
             });
             if (!res.ok) throw new Error("Delete failed");

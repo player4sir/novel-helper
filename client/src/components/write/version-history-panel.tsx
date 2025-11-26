@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, History, RotateCcw, GitCommit, ChevronRight, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
 import { zhCN } from "date-fns/locale";
@@ -34,7 +35,7 @@ export function VersionHistoryPanel({ chapterId, projectId }: VersionHistoryPane
     const { data: history, isLoading } = useQuery<ChangeSet[]>({
         queryKey: ["/api/chapters", chapterId, "history"],
         queryFn: async () => {
-            const res = await fetch(`/api/chapters/${chapterId}/history`);
+            const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/history`);
             if (!res.ok) throw new Error("Failed to fetch history");
             return res.json();
         },

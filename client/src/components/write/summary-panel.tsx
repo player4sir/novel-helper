@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2, RefreshCw, FileText, Book, Library } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { apiRequest } from "@/lib/queryClient";
 
 interface SummaryPanelProps {
@@ -34,7 +35,7 @@ export function SummaryPanel({ projectId, chapterId, volumeId }: SummaryPanelPro
         queryFn: async () => {
             const params = new URLSearchParams({ projectId });
             if (chapterId) params.append("chapterId", chapterId);
-            const res = await fetch(`/api/summaries?${params.toString()}`);
+            const res = await fetch(`${API_BASE_URL}/api/summaries?${params.toString()}`);
             if (!res.ok) throw new Error("Failed to fetch summaries");
             return res.json();
         },

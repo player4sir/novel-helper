@@ -21,14 +21,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import type { Project, Outline, Volume, Chapter } from "@shared/schema";
 import { generateChapterTitle } from "@/lib/number-utils";
-import { GenerateVolumesDialog } from "@/components/outlines/generate-volumes-dialog";
+import { AppendChaptersDialog } from "@/components/outlines/append-chapters-dialog";
 import { GenerateChaptersDialog } from "@/components/outlines/generate-chapters-dialog";
 import { AppendVolumesDialog } from "@/components/outlines/append-volumes-dialog";
-import { AppendChaptersDialog } from "@/components/outlines/append-chapters-dialog";
-import type { Project, Outline, Volume, Chapter } from "@shared/schema";
+import { GenerateVolumesDialog } from "@/components/outlines/generate-volumes-dialog";
 
 const outlineTypes = {
   main: { label: "总纲", color: "primary" },
@@ -54,7 +53,7 @@ export default function Outlines() {
     queryKey: ["/api/volumes", selectedProjectId],
     queryFn: async () => {
       if (!selectedProjectId) return [];
-      const response = await fetch(`/api/volumes?projectId=${selectedProjectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/volumes?projectId=${selectedProjectId}`);
       if (!response.ok) throw new Error("Failed to fetch volumes");
       return response.json();
     },

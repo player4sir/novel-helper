@@ -33,6 +33,7 @@ import { QualityDashboard } from "../quality-dashboard";
 import { apiRequest } from "@/lib/queryClient";
 import type { Project, Chapter, Outline, Character } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 
 interface EditorPanelProps {
   project: Project;
@@ -125,7 +126,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
     queryKey: ["/api/outlines", project.id, chapter?.id],
     queryFn: async () => {
       if (!chapter?.id) return null;
-      const res = await fetch(`/api/outlines?projectId=${project.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/outlines?projectId=${project.id}`);
       if (!res.ok) return null;
       const outlines = await res.json();
       return outlines.find((o: Outline) => o.linkedChapterId === chapter.id);
@@ -137,7 +138,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
   const { data: characters } = useQuery<Character[]>({
     queryKey: ["/api/characters", project.id],
     queryFn: async () => {
-      const res = await fetch(`/api/characters?projectId=${project.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/characters?projectId=${project.id}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -222,7 +223,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
     if (!chapter) return;
     setIsDiagnosing(true);
     try {
-      const res = await fetch("/api/editor/diagnose", {
+      const res = await fetch(`${API_BASE_URL}/api/editor/diagnose`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -260,7 +261,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({ pr
     if (!chapter) return;
     setIsApplyingSuggestion(true);
     try {
-      const res = await fetch("/api/editor/fix-issue", {
+      const res = await fetch(`${API_BASE_URL}/api/editor/fix-issue`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

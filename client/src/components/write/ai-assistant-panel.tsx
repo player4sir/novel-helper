@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { useEditorAI } from "@/hooks/use-editor-ai";
 import type { AIModel, PromptTemplate } from "@shared/schema";
 import type { EditorPanelHandle } from "./editor-panel";
@@ -60,7 +61,7 @@ export function AIAssistantPanel({
   const { data: styles } = useQuery<any[]>({
     queryKey: ["/api/styles", projectId],
     queryFn: async () => {
-      const response = await fetch(`/api/projects/${projectId}/styles`);
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/styles`);
       if (!response.ok) {
         throw new Error("Failed to fetch styles");
       }
@@ -72,7 +73,7 @@ export function AIAssistantPanel({
   const { data: templates } = useQuery<PromptTemplate[]>({
     queryKey: ["/api/templates", projectId],
     queryFn: async () => {
-      const response = await fetch(`/api/projects/${projectId}/templates`);
+      const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/templates`);
       if (!response.ok) {
         throw new Error("Failed to fetch templates");
       }

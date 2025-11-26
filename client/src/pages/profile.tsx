@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -44,7 +45,7 @@ export default function Dashboard() {
   // Password Change Mutation
   const changePasswordMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/user/password", {
+      const res = await fetch(`${API_BASE_URL}/api/user/password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),

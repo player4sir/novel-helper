@@ -20,15 +20,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
-import { apiRequest } from "@/lib/queryClient";
-import { insertPromptTemplateSchema, type Project, type PromptTemplate } from "@shared/schema";
-import { z } from "zod";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { insertPromptTemplateSchema } from "@shared/schema";
+import type { PromptTemplate, Project } from "@shared/schema";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const categoryConfig = {
@@ -62,7 +71,7 @@ export default function PromptTemplates() {
     queryKey: ["/api/prompt-templates", selectedProjectId],
     queryFn: async () => {
       if (!selectedProjectId) return [];
-      const response = await fetch(`/api/prompt-templates/${selectedProjectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/prompt-templates/${selectedProjectId}`);
       if (!response.ok) throw new Error("Failed to fetch templates");
       return response.json();
     },
@@ -234,11 +243,11 @@ export default function PromptTemplates() {
                           使用 {"{变量名}"} 定义变量，如 {"{角色名}"} {"{场景描述}"}
                         </FormDescription>
                         <FormControl>
-                          <Textarea 
-                            placeholder="输入提示词模板..." 
-                            rows={12} 
+                          <Textarea
+                            placeholder="输入提示词模板..."
+                            rows={12}
                             className="font-mono text-sm"
-                            {...field} 
+                            {...field}
                           />
                         </FormControl>
                         <FormMessage />

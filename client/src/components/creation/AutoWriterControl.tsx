@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Play, Pause, Loader2, Settings2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import {
     Dialog,
@@ -58,7 +59,7 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
     const { data: styles } = useQuery<any[]>({
         queryKey: ["/api/styles", projectId],
         queryFn: async () => {
-            const res = await fetch(`/api/styles?projectId=${projectId}`);
+            const res = await fetch(`${API_BASE_URL}/api/styles?projectId=${projectId}`);
             if (!res.ok) throw new Error("Failed to fetch styles");
             return res.json();
         }
@@ -68,7 +69,7 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
 
     const fetchStatus = async () => {
         try {
-            const res = await fetch(`/api/auto-creation/status/${projectId}`);
+            const res = await fetch(`${API_BASE_URL}/api/auto-creation/status/${projectId}`);
             if (res.ok) {
                 const data = await res.json();
                 setJob(data);
@@ -93,7 +94,7 @@ export function AutoWriterControl({ projectId }: AutoWriterControlProps) {
     const handleStart = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch("/api/auto-creation/start", {
+            const res = await fetch(`${API_BASE_URL}/api/auto-creation/start`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ projectId, config }),

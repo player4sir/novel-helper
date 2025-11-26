@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Wand2, Save, Sparkles, ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 import { StepResultDisplay } from "./step-result-display";
 import { cn } from "@/lib/utils";
@@ -186,7 +187,7 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
         if (!sessionId) return;
         setIsGenerating(true);
         try {
-            const res = await fetch("/api/creation/confirm", {
+            const res = await fetch(`${API_BASE_URL}/api/creation/confirm`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -219,7 +220,7 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
         if (!sessionId) return;
 
         try {
-            const res = await fetch("/api/creation/step/regenerate", {
+            const res = await fetch(`${API_BASE_URL}/api/creation/step/regenerate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

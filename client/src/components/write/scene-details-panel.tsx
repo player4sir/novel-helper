@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/queryClient";
 import {
   Accordion,
   AccordionContent,
@@ -55,7 +56,7 @@ export function SceneDetailsPanel({ chapterId, projectId }: SceneDetailsPanelPro
   const { data: scenes, isLoading: scenesLoading } = useQuery<SceneFrame[]>({
     queryKey: ["/api/scene-frames", chapterId],
     queryFn: async () => {
-      const res = await fetch(`/api/scene-frames/${chapterId}`);
+      const res = await fetch(`${API_BASE_URL}/api/scene-frames/${chapterId}`);
       if (!res.ok) throw new Error("Failed to fetch scenes");
       return res.json();
     },
@@ -112,7 +113,7 @@ function SceneItem({ scene, projectId, chapterId }: { scene: SceneFrame; project
   const { data: drafts, isLoading: draftsLoading } = useQuery<DraftChunk[]>({
     queryKey: ["/api/draft-chunks", scene.id],
     queryFn: async () => {
-      const res = await fetch(`/api/draft-chunks/${scene.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/draft-chunks/${scene.id}`);
       if (!res.ok) throw new Error("Failed to fetch drafts");
       return res.json();
     },
@@ -122,7 +123,7 @@ function SceneItem({ scene, projectId, chapterId }: { scene: SceneFrame; project
 
   const regenerateMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/scenes/${scene.id}/regenerate`, {
+      const res = await fetch(`${API_BASE_URL}/api/scenes/${scene.id}/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, chapterId }),

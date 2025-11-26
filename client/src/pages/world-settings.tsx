@@ -20,14 +20,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { apiRequest } from "@/lib/queryClient";
-import { insertWorldSettingSchema, type Project, type WorldSetting } from "@shared/schema";
-import { z } from "zod";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { insertWorldSettingSchema } from "@shared/schema";
+import type { WorldSetting, Project } from "@shared/schema";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { GenerateWorldSettingsDialog } from "@/components/world/generate-world-settings-dialog";
 
 const categoryConfig = {
@@ -59,7 +67,7 @@ export default function WorldSettings() {
     queryKey: ["/api/world-settings", selectedProjectId],
     queryFn: async () => {
       if (!selectedProjectId) return [];
-      const response = await fetch(`/api/world-settings/${selectedProjectId}`);
+      const response = await fetch(`${API_BASE_URL}/api/world-settings/${selectedProjectId}`);
       if (!response.ok) throw new Error("Failed to fetch world settings");
       return response.json();
     },
