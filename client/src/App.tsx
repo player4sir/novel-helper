@@ -10,7 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 
-import AuthPage from "@/pages/auth-page";
+
 import LandingPage from "@/pages/landing-page";
 import Dashboard from "@/pages/dashboard";
 import Write from "@/pages/write";
@@ -37,7 +37,7 @@ function ProtectedRoute({ component: Component, ...rest }: any) {
   }
 
   if (!user) {
-    return <AuthPage />;
+    return <LandingPage />;
   }
 
   return <Component {...rest} />;
@@ -70,7 +70,7 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 function Router() {
   return (
     <Switch>
-      <Route path="/auth" component={AuthPage} />
+
 
       <Route path="/" component={LandingPage} />
 

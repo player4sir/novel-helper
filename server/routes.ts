@@ -31,7 +31,9 @@ import {
   insertStatisticSchema,
   statistics,
   styleProfiles,
+
   insertStyleProfileSchema,
+  paymentOrders,
 } from "@shared/schema";
 import { vectorizeQueue, summaryQueue } from "./jobs/queue";
 import { summaryChainService } from "./summary-chain-service";
@@ -41,6 +43,7 @@ import { projectWordCountService } from "./project-word-count-service";
 import { aiContext } from "./ai-context";
 import { setupAuth } from "./auth";
 import { checkUsageQuota } from "./usage-middleware";
+import { alipayService, wechatPayService } from "./payment-service";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -3251,6 +3254,88 @@ ${ragResult.promptText}
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
+  });
+
+  // ============================================================================
+  // Payment API
+  // ============================================================================
+
+  app.post("/api/payment/create", isAuthenticated, async (req, res) => {
+    try {
+      const { amount, provider, planId, description } = req.body;
+      const userId = req.user!.id;
+
+      // Create order in DB
+      const [order] = await db.insert(paymentOrders).values({
+        userId,
+        amount,
+        provider,
+        planId,
+        status: "pending",
+      }).returning();
+
+      let qrCode = "";
+      if (provider === "alipay") {
+        qrCode = await alipayService.createNativePay(order.id, amount, description || "Novel Helper Pro");
+      } else if (provider === "wechat") {
+        qrCode = await wechatPayService.createNativePay(order.id, amount, description || "Novel Helper Pro");
+      } else {
+        return res.status(400).json({ error: "Invalid provider" });
+      }
+
+      res.json({ orderId: order.id, qrCode });
+    } catch (error: any) {
+      console.error("Payment creation failed:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/payment/status/:orderId", isAuthenticated, async (req, res) => {
+    try {
+      const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, req.params.orderId));
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      if (order.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      res.json({ status: order.status });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Webhooks (Public)
+  app.post("/api/payment/webhook/alipay", async (req, res) => {
+    // Verify signature
+    if (!alipayService.verifySignature(req.body)) {
+      return res.status(400).send("Invalid signature");
+    }
+
+    const tradeStatus = req.body.trade_status;
+    const outTradeNo = req.body.out_trade_no;
+
+    if (tradeStatus === 'TRADE_SUCCESS') {
+      await db.update(paymentOrders)
+        .set({ status: 'paid', paidAt: new Date(), tradeNo: req.body.trade_no })
+        .where(eq(paymentOrders.id, outTradeNo));
+
+      // TODO: Update user subscription
+      // We need to fetch the order to get the userId and planId
+      const [order] = await db.select().from(paymentOrders).where(eq(paymentOrders.id, outTradeNo));
+      if (order) {
+        // Logic to update subscription...
+        // For now just log
+        console.log(`Order ${outTradeNo} paid by user ${order.userId}`);
+      }
+    }
+
+    res.send("success");
+  });
+
+  app.post("/api/payment/webhook/wechat", async (req, res) => {
+    console.log("WeChat webhook received", req.body);
+    res.status(200).send({ code: "SUCCESS", message: "成功" });
   });
 
   return httpServer;

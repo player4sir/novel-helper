@@ -72,7 +72,7 @@ import {
   type InsertUserUsage,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, isNull, or } from "drizzle-orm";
+import { eq, desc, and, isNull, or, sql } from "drizzle-orm";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { pool } from "./db";
@@ -1165,27 +1165,27 @@ export class DatabaseStorage implements IStorage {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const [existing] = await db
-      .select()
-      .from(userUsage)
-      .where(and(eq(userUsage.userId, userId), eq(userUsage.date, today)));
+    const increment = type === 'token'
+      ? { tokenCount: sql`${userUsage.tokenCount} + ${amount}` }
+      : type === 'project'
+        ? { projectCount: sql`${userUsage.projectCount} + ${amount}` }
+        : { aiRequestCount: sql`${userUsage.aiRequestCount} + ${amount}` };
 
-    if (existing) {
-      const updates: any = { updatedAt: new Date() };
-      if (type === 'token') updates.tokenCount = (existing.tokenCount || 0) + amount;
-      if (type === 'project') updates.projectCount = (existing.projectCount || 0) + amount;
-      if (type === 'ai_request') updates.aiRequestCount = (existing.aiRequestCount || 0) + amount;
-
-      await db.update(userUsage).set(updates).where(eq(userUsage.id, existing.id));
-    } else {
-      await db.insert(userUsage).values({
+    await db.insert(userUsage)
+      .values({
         userId,
         date: today,
         tokenCount: type === 'token' ? amount : 0,
         projectCount: type === 'project' ? amount : 0,
         aiRequestCount: type === 'ai_request' ? amount : 0,
+      })
+      .onConflictDoUpdate({
+        target: [userUsage.userId, userUsage.date],
+        set: {
+          ...increment,
+          updatedAt: new Date(),
+        },
       });
-    }
   }
 }
 

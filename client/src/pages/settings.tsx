@@ -1,4 +1,4 @@
-import { Settings as SettingsIcon, Database, Trash2 } from "lucide-react";
+import { Settings as SettingsIcon, Database, Trash2, CreditCard, CheckCircle2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -16,6 +16,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { useAuth } from "@/hooks/use-auth";
+import { PaymentDialog } from "@/components/payment/payment-dialog";
+import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 
 export default function Settings() {
   const { toast } = useToast();
@@ -39,6 +43,15 @@ export default function Settings() {
     },
   });
 
+  const { user } = useAuth();
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<{ id: string, amount: number, title: string } | null>(null);
+
+  const handleUpgrade = (planId: string, amount: number, title: string) => {
+    setSelectedPlan({ id: planId, amount, title });
+    setPaymentOpen(true);
+  };
+
   return (
     <div className="p-6 max-w-screen-xl mx-auto space-y-6">
       <div>
@@ -49,6 +62,47 @@ export default function Settings() {
       </div>
 
       <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-primary" />
+              <CardTitle>订阅管理</CardTitle>
+            </div>
+            <CardDescription>
+              查看和管理您的订阅计划
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-slate-50 dark:bg-slate-900">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-lg">当前计划</h3>
+                  <Badge variant={user?.subscriptionTier === 'pro' ? "default" : "secondary"}>
+                    {user?.subscriptionTier === 'pro' ? '专业版' : '免费版'}
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {user?.subscriptionTier === 'pro'
+                    ? "您正在享受专业版的所有权益"
+                    : "升级到专业版解锁更多高级功能"}
+                </p>
+              </div>
+              {user?.subscriptionTier !== 'pro' && (
+                <Button onClick={() => handleUpgrade("pro_monthly", 3900, "专业版月卡")}>
+                  升级订阅
+                </Button>
+              )}
+            </div>
+
+            {user?.subscriptionTier === 'pro' && (
+              <div className="flex items-center gap-2 text-green-600">
+                <CheckCircle2 className="h-5 w-5" />
+                <span className="font-medium">订阅状态正常</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -160,6 +214,19 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
-    </div>
+
+
+      {
+        selectedPlan && (
+          <PaymentDialog
+            open={paymentOpen}
+            onOpenChange={setPaymentOpen}
+            planId={selectedPlan.id}
+            amount={selectedPlan.amount}
+            title={selectedPlan.title}
+          />
+        )
+      }
+    </div >
   );
 }

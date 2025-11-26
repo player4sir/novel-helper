@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, vector, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, boolean, vector, json, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -29,6 +29,20 @@ export const subscriptions = pgTable("subscriptions", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Payment Orders table - tracks payment transactions
+export const paymentOrders = pgTable("payment_orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  amount: integer("amount").notNull(), // in cents
+  currency: text("currency").notNull().default("CNY"),
+  status: text("status").notNull().default("pending"), // pending, paid, failed, cancelled
+  provider: text("provider").notNull(), // alipay, wechat
+  tradeNo: text("trade_no"), // External transaction ID
+  planId: text("plan_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  paidAt: timestamp("paid_at"),
+});
+
 // User Usage table - tracks daily usage quotas
 export const userUsage = pgTable("user_usage", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -39,6 +53,10 @@ export const userUsage = pgTable("user_usage", {
   aiRequestCount: integer("ai_request_count").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => {
+  return {
+    userDateUnique: uniqueIndex("user_date_unique").on(table.userId, table.date),
+  };
 });
 
 // Session table - for connect-pg-simple
@@ -773,6 +791,16 @@ export const insertUserUsageSchema = createInsertSchema(userUsage).omit({
 });
 export type InsertUserUsage = z.infer<typeof insertUserUsageSchema>;
 export type UserUsage = typeof userUsage.$inferSelect;
+
+export const insertPaymentOrderSchema = createInsertSchema(paymentOrders).omit({
+  id: true,
+  createdAt: true,
+  paidAt: true,
+});
+export type InsertPaymentOrder = z.infer<typeof insertPaymentOrderSchema>;
+export type PaymentOrder = typeof paymentOrders.$inferSelect;
+
+
 
 export const insertProjectSchema = createInsertSchema(projects).omit({
   id: true,

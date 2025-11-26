@@ -22,13 +22,9 @@ export async function checkUsageQuota(req: Request, res: Response, next: NextFun
     }
 
     const userId = req.user.id;
-    const user = await storage.getUserByUsername(req.user.username); // Refresh user to get latest subscription
-
-    if (!user) {
-        return res.status(401).json({ error: "User not found" });
-    }
-
-    const tier = (user.subscriptionTier || "free") as keyof typeof QUOTAS;
+    // req.user is populated by passport.deserializeUser which fetches the full user record
+    // so we can use it directly without another DB query.
+    const tier = (req.user.subscriptionTier || "free") as keyof typeof QUOTAS;
     const quota = QUOTAS[tier] || QUOTAS.free;
 
     // Check project limit for creation
