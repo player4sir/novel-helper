@@ -1,6 +1,6 @@
 import { createWorker, QUEUE_NAMES } from './queue';
 import { db } from '../db';
-import { chapters, summaries } from '@shared/schema';
+import { chapters, summaries, projects } from '@shared/schema';
 import { aiService } from '../ai-service';
 import { eq } from 'drizzle-orm';
 import { Job } from 'bullmq';

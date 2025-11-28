@@ -27,11 +27,11 @@ const worker = createWorker(QUEUE_NAMES.SUMMARY, async (job: Job) => {
     }
 });
 
-worker.on('completed', (job) => {
+worker.on('completed', (job: any) => {
     console.log(`[SummaryWorker] Job ${job.id} completed successfully`);
 });
 
-worker.on('failed', (job, err) => {
+worker.on('failed', (job: any, err: any) => {
     console.error(`[SummaryWorker] Job ${job?.id} failed with ${err.message}`);
 });
 

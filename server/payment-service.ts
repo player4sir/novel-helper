@@ -91,8 +91,9 @@ export class WeChatPayService {
                     total: amount,
                     currency: 'CNY',
                 },
+                notify_url: process.env.WECHAT_NOTIFY_URL || 'https://example.com/notify',
             });
-            return result.code_url;
+            return (result as any).code_url;
         } catch (error) {
             console.error("WeChat Pay create error:", error);
             throw new Error("Failed to create WeChat Pay order");

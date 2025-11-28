@@ -85,7 +85,7 @@ export class ContentGenerationService {
 
             // 3. Gather Context
             const contextData = await this.gatherContext(projectId, chapterId);
-            const { characters, worldSettings, outlines, mainOutline, project } = contextData;
+            const { characters, worldSettings, outlines, mainOutline } = contextData;
 
             const chapterOutline = outlines.find(
                 (o) => o.type === "chapter" && o.linkedChapterId === chapterId
@@ -201,7 +201,7 @@ export class ContentGenerationService {
                         projectId,
                         scene,
                         draftContext,
-                        project.userId
+                        project.userId || undefined
                     );
 
                     let result: any = null;

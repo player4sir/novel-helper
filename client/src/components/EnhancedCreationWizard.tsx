@@ -187,12 +187,49 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
         if (!sessionId) return;
         setIsGenerating(true);
         try {
+            // Transform stepResults to ProjectMeta structure
+            // This ensures that any edits made by the user in the Review step are preserved
+            const overrides: any = {
+                ...stepResults.basic,
+            };
+
+            // Map characters
+            if (stepResults.characters?.characters) {
+                overrides.mainEntities = stepResults.characters.characters.map((c: any) => ({
+                    ...c,
+                    // Ensure compatibility with backend expected fields
+                    shortMotivation: c.motivation || c.shortMotivation,
+                    motivation: c.motivation || c.shortMotivation
+                }));
+            }
+
+            if (stepResults.characters?.relationships) {
+                overrides.relationships = stepResults.characters.relationships;
+            }
+
+            // Map world settings
+            if (stepResults.world?.worldSetting) {
+                overrides.worldSettings = stepResults.world.worldSetting;
+            }
+
+            // Map outline
+            if (stepResults.outline) {
+                overrides.outline = stepResults.outline.overallOutline;
+                overrides.opening = stepResults.outline.opening;
+                overrides.climax = stepResults.outline.climax;
+                overrides.ending = stepResults.outline.ending;
+                overrides.plotPoints = stepResults.outline.plotPoints;
+                overrides.estimatedChapters = stepResults.outline.estimatedChapters;
+            }
+
+            console.log("Finalizing with overrides:", overrides);
+
             const res = await fetch(`${API_BASE_URL}/api/creation/confirm`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     sessionId,
-                    overrides: stepResults
+                    overrides
                 }),
             });
 
@@ -204,6 +241,7 @@ export function EnhancedCreationWizard({ open, onOpenChange, onSuccess }: Enhanc
                 onSuccess(data.projectId);
             }
         } catch (error: any) {
+            console.error("Finalize error:", error);
             toast({ title: "创建失败", description: error.message, variant: "destructive" });
         } finally {
             setIsGenerating(false);

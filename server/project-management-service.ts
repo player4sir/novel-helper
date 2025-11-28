@@ -289,7 +289,7 @@ export class ProjectManagementService {
     }
 
     // 创建新项目
-    const projectData: InsertProject = {
+    const projectData: InsertProject & { userId: string } = {
       title: newTitle || `${sourceProject.title} (副本)`,
       genre: sourceProject.genre,
       style: sourceProject.style,
@@ -297,6 +297,7 @@ export class ProjectManagementService {
       currentWordCount: 0, // 重置字数
       status: "active",
       description: sourceProject.description,
+      userId: sourceProject.userId!,
     };
 
     const newProject = await storage.createProject(projectData);

@@ -459,15 +459,19 @@ export class SceneDraftServiceOptimized {
 
       // Step 3: Assemble Prompt
       const promptTimer = perfMonitor.startTimer('prompt_assembly');
-      const template = await promptTemplateService.getTemplate("scene-draft-v2");
+      const template = await this.promptTemplateService.getTemplate("scene-draft-v2");
       if (!template) {
         throw new Error("Prompt template 'scene-draft-v2' not found");
       }
 
-      const assembledPrompt = await promptTemplateService.assemble(template, {
+      const assembledPrompt = await this.promptTemplateService.assemblePrompt(template, {
         ...context,
-        sceneFrame,
-        projectId
+        projectId,
+        chapterId: sceneFrame.chapterId,
+        chapterIndex: context.currentScene?.index || 0,
+        beats: [sceneFrame.purpose],
+        estimatedWords: this.SCENE_TARGET_WORDS,
+        characters: context.characters || [],
       });
       timings.promptAssembly = 0; // Placeholder
       promptTimer();

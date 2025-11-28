@@ -506,6 +506,8 @@ export const creationHistory = pgTable("creation_history", {
   metadata: jsonb("metadata").notNull(), // { modelUsed, tokensUsed, generationTime }
 });
 
+export type CreationHistory = typeof creationHistory.$inferSelect;
+
 // Auto Creation Jobs table - track automated writing sessions
 export const autoCreationJobs = pgTable("auto_creation_jobs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

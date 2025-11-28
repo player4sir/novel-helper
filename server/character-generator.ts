@@ -335,6 +335,8 @@ export class CharacterGenerator {
 
       "配角": `
 作为配角，这个角色必须：
+- **CRITICAL**: 仔细检查"角色设计指导原则"中是否指定了具体的配角类型（如：制片人、竞争对手、粉丝等）。
+- 如果有指定且尚未生成的角色类型，**必须优先生成该类型**。
 - 有自己独立的动机和目标
 - 与主角有互补或冲突的性格特点
 - 有自己的成长空间
@@ -342,6 +344,8 @@ export class CharacterGenerator {
 
       "反派": `
 作为反派，这个角色必须：
+- **CRITICAL**: 仔细检查"角色设计指导原则"中是否指定了具体的反派类型。
+- 如果有指定且尚未生成的反派类型，**必须优先生成该类型**。
 - 有合理的动机，不是单纯的邪恶
 - 有自己的信念和价值观
 - 与主角形成镜像或对比
@@ -369,13 +373,14 @@ ${context.genre ? `类型：${context.genre}` : ""}
 ${context.style ? `风格：${context.style}` : ""}
 ${context.themeTags && context.themeTags.length > 0 ? `主题：${context.themeTags.join("、")}` : ""}
 ${context.coreConflicts && context.coreConflicts.length > 0 ? `核心冲突：\n${context.coreConflicts.map((c, i) => `${i + 1}. ${c}`).join("\n")}` : ""}
-${context.characterDirective ? `\n# 角色设计指导原则\n${context.characterDirective}\n` : ""}
+${context.characterDirective ? `\n# 角色设计指导原则 (CRITICAL)\n${context.characterDirective}\n\n请务必分析上述指导原则，提取其中提到的具体角色身份（例如：经纪人、富二代、导师等），并检查已有角色列表，优先生成尚未出现的关键角色。` : ""}
 
 ${context.existingCharacters && context.existingCharacters.length > 0 ? `
 # 已有角色
 ${context.existingCharacters.map(c => `- ${c.name}（${c.role}）：${c.motivation}`).join("\n")}
 
 请确保新角色与已有角色形成互补或冲突关系。
+请检查已有角色是否已经覆盖了"角色设计指导原则"中的关键角色。如果尚未覆盖，请务必生成缺失的关键角色。
 
 **CRITICAL NEGATIVE CONSTRAINT**:
 You must generate a completely **NEW** name.
@@ -386,10 +391,13 @@ If you generate a name that is already in the list above, it will be considered 
 # 思考过程 (CRITICAL)
 在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
 请按以下步骤推演：
-1. **类型适配**: 思考${genre}类型中${role}的典型特征，以及如何做出新意。
-2. **关系构建**: 分析该角色在现有角色关系网中的位置，如何制造冲突或互补。
-3. **深度挖掘**: 设计一个核心的"内在冲突"（Inner Conflict）和"虚假信念"（False Belief）。
-4. **名字构思**: 构思 3 个符合背景的名字，选出最贴切的一个。
+1. **需求分析**: 仔细阅读"角色设计指导原则"，列出所有提到的具体角色身份。
+2. **缺口检查**: 对比"已有角色"列表，找出尚未生成的关键角色身份。
+3. **角色定位**: 如果有尚未生成的关键角色，直接选择其中一个作为本次生成的角色身份；如果没有，则根据故事逻辑创造一个合理的${role}。
+4. **类型适配**: 思考${genre}类型中该角色的典型特征，以及如何做出新意。
+5. **关系构建**: 分析该角色在现有角色关系网中的位置，如何制造冲突或互补。
+6. **深度挖掘**: 设计一个核心的"内在冲突"（Inner Conflict）和"虚假信念"（False Belief）。
+7. **名字构思**: 构思 3 个符合背景的名字，选出最贴切的一个。
 
 # 角色要求
 ${roleGuidance[role]}
