@@ -60,7 +60,8 @@ export class RelationshipInferrer {
   async inferRelationships(
     characters: Character[],
     conflicts: string[],
-    context: ProjectContext
+    context: ProjectContext,
+    userId: string
   ): Promise<RelationshipGraph> {
     console.log(`[RelationshipInferrer] Inferring relationships for ${characters.length} characters`);
 
@@ -76,7 +77,7 @@ export class RelationshipInferrer {
     const prompt = this.buildInferencePrompt(characters, conflicts, context);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     if (!defaultModel) {

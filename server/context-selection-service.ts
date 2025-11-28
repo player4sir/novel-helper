@@ -18,6 +18,7 @@ export interface ContextSelectionOptions {
   prioritizeRecent: boolean;
   includeKeyBeats: boolean;
   useEmbedding: boolean;
+  userId?: string;
 }
 
 export interface ContextSelectionResult {
@@ -86,7 +87,7 @@ export class ContextSelectionService {
     options: ContextSelectionOptions
   ): Promise<ContextSelectionResult> {
     // Get target embedding
-    const targetEmbedding = await aiService.getEmbedding(targetContext);
+    const targetEmbedding = await aiService.getEmbedding(targetContext, options.userId);
     if (!targetEmbedding) {
       throw new Error("Failed to get target embedding");
     }
@@ -110,7 +111,7 @@ export class ContextSelectionService {
         const chapterText = this.buildChapterText(chapter, outline);
         if (chapterText.length > 50) { // Skip empty/short chapters
           try {
-            chapterEmbedding = await aiService.getEmbedding(chapterText);
+            chapterEmbedding = await aiService.getEmbedding(chapterText, options.userId);
           } catch (e) {
             console.warn(`[Context Selection] Failed to generate embedding for chapter ${chapter.id}:`, e);
           }

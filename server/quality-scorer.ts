@@ -50,7 +50,8 @@ export class QualityScorer {
    */
   async scoreCandidate(
     candidate: ProjectMeta,
-    context: ProjectContext
+    context: ProjectContext,
+    userId: string
   ): Promise<QualityScore> {
     console.log("[QualityScorer] Scoring candidate");
 
@@ -59,8 +60,8 @@ export class QualityScorer {
     const consistency = this.scoreConsistency(candidate);
     const richness = this.scoreRichness(candidate);
     const writability = this.scoreWritability(candidate);
-    const semanticQuality = await this.scoreSemanticQuality(candidate);
-    
+    const semanticQuality = await this.scoreSemanticQuality(candidate, userId);
+
     // Get innovation score
     const innovationScore = innovationEvaluator.evaluateInnovation(candidate);
     const innovation = innovationScore.overall;
@@ -118,9 +119,9 @@ export class QualityScorer {
     // Characters (30 points)
     if (meta.mainEntities && meta.mainEntities.length > 0) {
       score += Math.min(15, meta.mainEntities.length * 5);
-      
+
       // Check protagonist (支持中英文)
-      const hasProtagonist = meta.mainEntities.some(e => e.role === "主角" || e.role === "protagonist");
+      const hasProtagonist = meta.mainEntities.some(e => e.role === "主角" || (e.role as string) === "protagonist");
       score += hasProtagonist ? 15 : 0;
     }
 
@@ -239,7 +240,7 @@ export class QualityScorer {
     // Check for clear conflicts (20 points)
     if (meta.coreConflicts && meta.coreConflicts.length >= 2) {
       score += 10;
-      
+
       // Check conflict depth
       const deepConflicts = meta.coreConflicts.filter(c => c.length > 30);
       score += Math.min(10, deepConflicts.length * 5);
@@ -251,7 +252,7 @@ export class QualityScorer {
         (sum, e) => sum + (e.motivation?.length || 0),
         0
       ) / meta.mainEntities.length;
-      
+
       if (avgMotivationLength >= 30) {
         score += 10;
       }
@@ -288,6 +289,7 @@ export class QualityScorer {
    */
   async scoreSemanticQuality(
     meta: ProjectMeta,
+    userId: string,
     embedding?: number[]
   ): Promise<number> {
     let score = 50; // Base score
@@ -295,14 +297,14 @@ export class QualityScorer {
     // If no embedding provided, try to generate one
     if (!embedding) {
       try {
-        const models = await storage.getAIModels();
+        const models = await storage.getAIModels(userId);
         const embeddingModel = models.find(
           m => m.modelType === "embedding" && m.isActive && m.isDefaultEmbedding
         );
 
         if (embeddingModel) {
           const textForEmbedding = `${meta.title} ${meta.premise}`;
-          const result = await aiService.getEmbedding(textForEmbedding);
+          const result = await aiService.getEmbedding(textForEmbedding, userId);
           if (result) {
             embedding = result;
           }
@@ -360,7 +362,7 @@ export class QualityScorer {
 
     // Simple keyword matching
     const commonWords = ["成长", "复仇", "爱情", "权力", "正义", "自由"];
-    
+
     for (const word of commonWords) {
       if (themeKeywords.includes(word) && conflictText.includes(word)) {
         return true;
@@ -407,7 +409,7 @@ export class QualityScorer {
     for (const char of characters) {
       if (char.motivation) {
         const motivation = char.motivation.toLowerCase();
-        
+
         // Check for keyword overlap
         const keywords = motivation.split(/\s+/).filter(w => w.length > 2);
         for (const keyword of keywords) {
@@ -435,7 +437,7 @@ export class QualityScorer {
       for (const rule of world.rules) {
         const ruleContent = rule.content.toLowerCase();
         const keywords = ruleContent.split(/\s+/).filter(w => w.length > 2);
-        
+
         for (const keyword of keywords) {
           if (conflictText.includes(keyword)) {
             return true;

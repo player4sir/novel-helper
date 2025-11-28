@@ -51,8 +51,13 @@ import { users } from "@shared/schema";
 
 const scryptAsync = promisify(scrypt);
 
+import { adminRouter } from "./routes/admin";
+
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
+
+  // Register admin routes
+  app.use("/api/admin", adminRouter);
 
   // Middleware to check authentication
   const isAuthenticated = (req: any, res: any, next: any) => {
@@ -232,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           style: style as string,
           targetWordCount: targetWordCount ? parseInt(targetWordCount as string) : undefined,
         },
-        userId as string,
+        req.user!.id,
         (step, status, message, progress, metadata) => {
           session.push({
             type: "progress",
@@ -1065,7 +1070,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           await vectorizeQueue.add('vectorize-chapter', {
             type: 'chapter',
-            id: chapter.id
+            id: chapter.id,
+            userId: req.user!.id
           });
 
           await summaryQueue.add('generate-summary', {
@@ -2152,7 +2158,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await sceneDraftService.generateSceneDraft(
         projectId,
         scene,
-        sceneContext
+        sceneContext,
+        req.user!.id
       );
 
       // Save execution log
@@ -3233,13 +3240,13 @@ ${ragResult.promptText}
   // Style Lab API
   // ============================================================================
 
-  app.post("/api/styles/extract", async (req, res) => {
+  app.post("/api/styles/extract", isAuthenticated, async (req, res) => {
     try {
       const { text } = req.body;
       if (!text || typeof text !== "string") {
         return res.status(400).json({ error: "Text is required" });
       }
-      const traits = await styleExtractionService.extractStyle(text);
+      const traits = await styleExtractionService.extractStyle(text, req.user!.id);
       res.json(traits);
     } catch (error: any) {
       res.status(500).json({ error: error.message });

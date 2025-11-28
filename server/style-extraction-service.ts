@@ -2,7 +2,7 @@ import { aiService } from "./ai-service";
 import { storage } from "./storage";
 
 export class StyleExtractionService {
-    async extractStyle(text: string): Promise<any> {
+    async extractStyle(text: string, userId?: string): Promise<any> {
         const prompt = `
     Analyze the following text and extract its stylistic characteristics.
     Focus on capturing the unique "voice" and "feel" of the writing.
@@ -19,7 +19,7 @@ export class StyleExtractionService {
     `;
 
         // Get a capable chat model
-        const models = await storage.getAIModels();
+        const models = await storage.getAIModels(userId || "");
         const chatModel = models.find(m => m.modelType === "chat" && m.isActive && m.isDefaultChat)
             || models.find(m => m.modelType === "chat" && m.isActive);
 

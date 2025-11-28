@@ -88,9 +88,16 @@ export class SummaryChainService {
 
         // Trigger vectorization
         try {
+            // Fetch project to get userId
+            const project = await db.query.projects.findFirst({
+                where: eq(projects.id, params.projectId),
+                columns: { userId: true }
+            });
+
             await vectorizeQueue.add('vectorize-summary', {
                 type: 'summary',
-                id: summaryId
+                id: summaryId,
+                userId: project?.userId
             });
             console.log(`[SummaryChain] Enqueued vectorization for summary ${summaryId}`);
         } catch (error) {

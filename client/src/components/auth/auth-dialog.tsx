@@ -54,10 +54,14 @@ export function AuthDialog({
         }
     };
 
-    const handleSuccess = () => {
+    const handleSuccess = (user?: any) => {
         setIsOpen(false);
-        // 登录/注册成功后重定向到应用
-        setLocation("/app");
+        // Check if user is admin
+        if (user?.role === "admin") {
+            setLocation("/admin");
+        } else {
+            setLocation("/app");
+        }
     };
 
     return (
@@ -65,38 +69,41 @@ export function AuthDialog({
             <DialogTrigger asChild>
                 {children}
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[440px] bg-slate-950/95 backdrop-blur-xl border-white/10 text-white">
-                <DialogHeader className="space-y-3">
+            <DialogContent className="sm:max-w-[440px] bg-[#0a0a0f]/95 backdrop-blur-xl border border-purple-500/20 text-white shadow-2xl shadow-purple-900/20">
+                <DialogHeader className="space-y-4">
                     <div className="flex items-center justify-center gap-2">
-                        <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500">
-                            <BookOpen className="h-5 w-5 text-white" />
+                        <div className="relative group">
+                            <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-blue-600 blur opacity-50 group-hover:opacity-100 transition duration-500 rounded-lg"></div>
+                            <div className="relative p-2 rounded-lg bg-[#0a0a0f] border border-white/10">
+                                <BookOpen className="h-6 w-6 text-purple-400" />
+                            </div>
                         </div>
-                        <span className="text-xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+                        <span className="text-xl font-bold bg-gradient-to-r from-white via-white to-gray-400 bg-clip-text text-transparent">
                             Novel Helper
                         </span>
                     </div>
 
-                    <DialogTitle className="text-2xl text-center text-white">
+                    <DialogTitle className="text-2xl text-center text-white font-bold tracking-tight">
                         {activeTab === "login" ? "欢迎回来" : "开始创作"}
                     </DialogTitle>
-                    <DialogDescription className="text-gray-400 text-center">
+                    <DialogDescription className="text-gray-400 text-center text-base">
                         {activeTab === "login"
                             ? "登录继续您的创作"
                             : "创建账号，开启 AI 辅助创作之旅"}
                     </DialogDescription>
                 </DialogHeader>
 
-                <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "login" | "register")} className="w-full mt-2">
-                    <TabsList className="grid w-full grid-cols-2 bg-white/5">
+                <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "login" | "register")} className="w-full mt-4">
+                    <TabsList className="grid w-full grid-cols-2 bg-white/5 border border-white/5 p-1 h-12">
                         <TabsTrigger
                             value="login"
-                            className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-blue-500 data-[state=active]:text-white"
+                            className="h-full data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-blue-600 data-[state=active]:text-white transition-all duration-300"
                         >
                             登录
                         </TabsTrigger>
                         <TabsTrigger
                             value="register"
-                            className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-blue-500 data-[state=active]:text-white"
+                            className="h-full data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-blue-600 data-[state=active]:text-white transition-all duration-300"
                         >
                             注册
                         </TabsTrigger>
@@ -133,7 +140,7 @@ export function AuthDialog({
     );
 }
 
-function LoginForm({ onSuccess }: { onSuccess: () => void }) {
+function LoginForm({ onSuccess }: { onSuccess: (user?: any) => void }) {
     const { loginMutation } = useAuth();
     const form = useForm({
         resolver: zodResolver(loginSchema),
@@ -144,24 +151,24 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
     });
 
     const onSubmit = async (data: z.infer<typeof loginSchema>) => {
-        await loginMutation.mutateAsync(data);
-        onSuccess();
+        const user = await loginMutation.mutateAsync(data);
+        onSuccess(user);
     };
 
     return (
         <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-6">
                 <FormField
                     control={form.control}
                     name="username"
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel className="text-gray-200">用户名</FormLabel>
+                            <FormLabel className="text-gray-300">用户名</FormLabel>
                             <FormControl>
                                 <Input
                                     placeholder="输入你的用户名"
                                     {...field}
-                                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-purple-500 focus:ring-purple-500/20 transition-all"
                                 />
                             </FormControl>
                             <FormMessage />
@@ -173,13 +180,13 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
                     name="password"
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel className="text-gray-200">密码</FormLabel>
+                            <FormLabel className="text-gray-300">密码</FormLabel>
                             <FormControl>
                                 <Input
                                     type="password"
                                     placeholder="输入你的密码"
                                     {...field}
-                                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-purple-500 focus:ring-purple-500/20 transition-all"
                                 />
                             </FormControl>
                             <FormMessage />
@@ -189,7 +196,7 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 
                 <Button
                     type="submit"
-                    className="w-full h-11 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white border-0 mt-6"
+                    className="w-full h-12 bg-purple-600 hover:bg-purple-700 text-white border-0 mt-6 shadow-[0_0_20px_-5px_rgba(147,51,234,0.5)] transition-all hover:scale-[1.02]"
                     disabled={loginMutation.isPending}
                 >
                     {loginMutation.isPending ? (
@@ -206,7 +213,7 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
     );
 }
 
-function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
+function RegisterForm({ onSuccess }: { onSuccess: (user?: any) => void }) {
     const { registerMutation } = useAuth();
     const form = useForm({
         resolver: zodResolver(registerSchema),
@@ -217,24 +224,24 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
     });
 
     const onSubmit = async (data: z.infer<typeof registerSchema>) => {
-        await registerMutation.mutateAsync(data);
-        onSuccess();
+        const user = await registerMutation.mutateAsync(data);
+        onSuccess(user);
     };
 
     return (
         <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-6">
                 <FormField
                     control={form.control}
                     name="username"
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel className="text-gray-200">用户名</FormLabel>
+                            <FormLabel className="text-gray-300">用户名</FormLabel>
                             <FormControl>
                                 <Input
                                     placeholder="选择一个用户名"
                                     {...field}
-                                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-purple-500 focus:ring-purple-500/20 transition-all"
                                 />
                             </FormControl>
                             <p className="text-xs text-gray-500">至少 3 个字符</p>
@@ -247,13 +254,13 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
                     name="password"
                     render={({ field }) => (
                         <FormItem>
-                            <FormLabel className="text-gray-200">密码</FormLabel>
+                            <FormLabel className="text-gray-300">密码</FormLabel>
                             <FormControl>
                                 <Input
                                     type="password"
                                     placeholder="创建一个安全的密码"
                                     {...field}
-                                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500/20"
+                                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-purple-500 focus:ring-purple-500/20 transition-all"
                                 />
                             </FormControl>
                             <p className="text-xs text-gray-500">至少 6 个字符</p>
@@ -264,7 +271,7 @@ function RegisterForm({ onSuccess }: { onSuccess: () => void }) {
 
                 <Button
                     type="submit"
-                    className="w-full h-11 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 text-white border-0 mt-6"
+                    className="w-full h-12 bg-purple-600 hover:bg-purple-700 text-white border-0 mt-6 shadow-[0_0_20px_-5px_rgba(147,51,234,0.5)] transition-all hover:scale-[1.02]"
                     disabled={registerMutation.isPending}
                 >
                     {registerMutation.isPending ? (

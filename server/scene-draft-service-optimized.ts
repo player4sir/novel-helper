@@ -146,7 +146,7 @@ export class SceneDraftServiceOptimized {
    * Get default model from database configuration (with caching)
    * Falls back to environment variable only if no database config exists
    */
-  private async getDefaultModel(): Promise<{ modelId: string; provider: string; baseUrl: string; apiKey?: string }> {
+  private async getDefaultModel(userId?: string): Promise<{ modelId: string; provider: string; baseUrl: string; apiKey?: string }> {
     // Check cache first
     const now = Date.now();
     if (this.defaultModelCache && (now - this.modelCacheTime) < this.MODEL_CACHE_TTL) {
@@ -155,7 +155,7 @@ export class SceneDraftServiceOptimized {
 
     try {
       // Get models from database
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId || "");
       const defaultChatModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
       if (defaultChatModel) {
@@ -409,10 +409,11 @@ export class SceneDraftServiceOptimized {
   async generateSceneDraft(
     projectId: string,
     sceneFrame: SceneFrame,
-    context: DraftContext
+    context: DraftContext,
+    userId?: string
   ): Promise<GenerationResult> {
     let finalResult: GenerationResult | null = null;
-    for await (const chunk of this.generateSceneDraftStream(projectId, sceneFrame, context)) {
+    for await (const chunk of this.generateSceneDraftStream(projectId, sceneFrame, context, userId)) {
       if (typeof chunk !== 'string') {
         finalResult = chunk;
       }
@@ -424,111 +425,59 @@ export class SceneDraftServiceOptimized {
   }
 
   /**
-   * Generate scene draft with streaming support
+   * Generate scene draft stream
    */
   async *generateSceneDraftStream(
     projectId: string,
     sceneFrame: SceneFrame,
-    context: DraftContext
+    context: DraftContext,
+    userId?: string
   ): AsyncGenerator<string | GenerationResult, void, unknown> {
     const totalTimer = perfMonitor.startTimer('total_generation');
-    const timings: Partial<TimingMetrics> = {};
+    const timings = {
+      contextBuild: 0,
+      promptAssembly: 0,
+      aiGeneration: 0,
+      validation: 0,
+      databaseSave: 0,
+      total: 0
+    };
 
     try {
-      // Step 1: Build context (5s)
-      const contextTimer = perfMonitor.startTimer('context_build');
-      const promptContext = this.buildPromptContext(projectId, sceneFrame, context);
-      timings.contextBuild = Date.now();
-      contextTimer();
-
-      // Step 2: Assemble prompt using PromptTemplate (2-3s)
-      const promptTimer = perfMonitor.startTimer('prompt_assembly');
-      const template = await this.promptTemplateService.getTemplate(this.CHAPTER_DRAFT_TEMPLATE_ID);
-      const assembledPrompt = this.promptTemplateService.assemblePrompt(template, promptContext);
-      timings.promptAssembly = Date.now() - timings.contextBuild;
-      promptTimer();
-
-      // Step 3: Check exact cache (<100ms)
-      const cachedResult = this.checkCache(assembledPrompt.signature);
-      if (cachedResult) {
-        console.log(`[Cache HIT] Signature: ${assembledPrompt.signature.substring(0, 8)}...`);
-
-        yield cachedResult.draftChunk.content;
-
-        timings.aiGeneration = 0;
-        timings.validation = 0;
-        timings.databaseSave = 0;
-        timings.total = Date.now() - timings.contextBuild;
-        totalTimer();
-
-        const basicCheck = {
-          passed: cachedResult.draftChunk.ruleCheckPassed || false,
-          criticalErrors: (cachedResult.draftChunk.ruleCheckErrors as string[]) || [],
-          warnings: (cachedResult.draftChunk.ruleCheckWarnings as string[]) || [],
-        };
-
-        const ruleCheck = {
-          passed: basicCheck.passed,
-          score: basicCheck.passed ? 80 : 60,
-          violations: [
-            ...basicCheck.criticalErrors.map(msg => ({
-              rule: 'cached_error',
-              severity: 'error',
-              message: msg,
-            })),
-            ...basicCheck.warnings.map(msg => ({
-              rule: 'cached_warning',
-              severity: 'warning',
-              message: msg,
-            })),
-          ],
-        };
-
-        const executionLog = {
-          executionId: cachedResult.draftChunk.createdFromExecId || '',
-          templateId: template.id,
-          templateVersion: template.version,
-          promptSignature: assembledPrompt.signature,
-          promptMetadata: { cached: true },
-          modelId: 'cache',
-          modelVersion: '1.0',
-          params: {},
-          responseHash: '',
-          responseSummary: cachedResult.draftChunk.localSummary || '',
-          tokensUsed: 0,
-          cost: 0,
-          qualityScore: {
-            overall: cachedResult.draftChunk.qualityScore || 75,
-            dimensions: {},
-          },
-          ruleViolations: ruleCheck.violations,
-          timestamp: new Date(),
-        };
-
-        yield {
-          draft: cachedResult.draftChunk,
-          basicCheck,
-          timing: timings as TimingMetrics,
-          ruleCheck,
-          executionLog,
-        };
-        return;
+      // Step 1: Get Model Config
+      const modelConfig = await this.getDefaultModel(userId);
+      if (!modelConfig) {
+        throw new Error("No AI model configured");
       }
 
-      console.log(`[Cache MISS] Signature: ${assembledPrompt.signature.substring(0, 8)}...`);
-      this.cacheMisses++;
+      // Step 2: Build Context
+      const contextTimer = perfMonitor.startTimer('context_build');
+      // Context is passed in, but we might need to enrich it or just use it
+      // For now, we assume context is ready
+      timings.contextBuild = 0; // Placeholder
+      contextTimer();
 
-      // Step 4: Generate with AI (Streamed)
+      // Step 3: Assemble Prompt
+      const promptTimer = perfMonitor.startTimer('prompt_assembly');
+      const template = await promptTemplateService.getTemplate("scene-draft-v2");
+      if (!template) {
+        throw new Error("Prompt template 'scene-draft-v2' not found");
+      }
+
+      const assembledPrompt = await promptTemplateService.assemble(template, {
+        ...context,
+        sceneFrame,
+        projectId
+      });
+      timings.promptAssembly = 0; // Placeholder
+      promptTimer();
+
+      // Step 4: Generate Stream
       const aiTimer = perfMonitor.startTimer('ai_generation');
-      const targetWords = this.calculateSceneWords(
-        [sceneFrame.purpose],
-        2 // default medium complexity
-      );
-
-      const modelConfig = await this.getDefaultModel();
+      const targetWords = sceneFrame.tokensEstimate ? Math.ceil(sceneFrame.tokensEstimate * 0.75) : 2000;
 
       let generatedContent = "";
-      const stream = aiService.generateStream({
+      const stream = await aiService.generateStream({
         prompt: assembledPrompt.text,
         modelId: modelConfig.modelId,
         provider: modelConfig.provider,

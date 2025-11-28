@@ -449,7 +449,7 @@ export class CreationOrchestrator {
     console.log("[Orchestrator] Creating project from merged meta");
 
     // Score the final meta for quality control
-    const qualityScore = await qualityScorer.scoreCandidate(finalMeta as any, seed as any);
+    const qualityScore = await qualityScorer.scoreCandidate(finalMeta as any, seed as any, session.userId || "");
     const innovationScore = innovationEvaluator.evaluateInnovation(finalMeta as any);
 
     console.log("[Orchestrator] Quality score:", qualityScore.overall);
@@ -463,7 +463,7 @@ export class CreationOrchestrator {
     }
 
     // Create the actual project using the merged meta
-    const project = await this.createProjectFromMergedMeta(finalMeta, seed);
+    const project = await this.createProjectFromMergedMeta(finalMeta, seed, session.userId || "");
 
     // Record to history
     await historyService.recordCandidate(
@@ -498,7 +498,8 @@ export class CreationOrchestrator {
    */
   private async createProjectFromMergedMeta(
     meta: ProjectMeta,
-    seed: ProjectSeed
+    seed: ProjectSeed,
+    userId: string
   ): Promise<any> {
     console.log("[Orchestrator] ========== Creating project from merged meta ==========");
     console.log("[Orchestrator] Meta summary:", {
@@ -510,6 +511,7 @@ export class CreationOrchestrator {
 
     // Create project in database
     const [project] = await db.insert(projects).values({
+      userId: userId,
       title: meta.title,
       description: meta.premise,
       genre: meta.genre || "通用",
@@ -862,7 +864,8 @@ export class CreationOrchestrator {
       const relationshipGraph = await relationshipInferrer.inferRelationships(
         characters,
         context.coreConflicts || [],
-        context
+        context,
+        session.userId || ""
       );
 
       console.log(`[Orchestrator] Inferred ${relationshipGraph.edges.length} relationships`);
@@ -1347,7 +1350,7 @@ ${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
       onProgress?.("evaluate", 85, "评估质量和创新性");
 
       // Score quality and innovation
-      const qualityScore = await qualityScorer.scoreCandidate(result.projectMeta as any, seed as any);
+      const qualityScore = await qualityScorer.scoreCandidate(result.projectMeta as any, seed as any, userId || "system");
       const innovationScore = innovationEvaluator.evaluateInnovation(result.projectMeta as any);
 
       console.log("[Orchestrator] Quality score:", qualityScore.overall);

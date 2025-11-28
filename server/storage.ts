@@ -473,7 +473,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // AI Models
-  async getAIModels(userId: string): Promise<AIModel[]> {
+  async getAIModels(userId?: string): Promise<AIModel[]> {
+    if (!userId) {
+      return await db.select().from(aiModels).where(isNull(aiModels.userId)).orderBy(desc(aiModels.createdAt));
+    }
     return await db.select().from(aiModels).where(eq(aiModels.userId, userId)).orderBy(desc(aiModels.createdAt));
   }
 

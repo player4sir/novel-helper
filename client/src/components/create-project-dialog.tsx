@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog";
 import { EnhancedCreationWizard } from "./EnhancedCreationWizard";
 
 interface CreateProjectDialogProps {
@@ -27,6 +27,7 @@ export function CreateProjectDialog({ children, onSuccess }: CreateProjectDialog
           e.preventDefault();
         }}
       >
+        <DialogTitle className="sr-only">创建新项目</DialogTitle>
         <div className="h-full w-full bg-background rounded-lg overflow-hidden flex flex-col shadow-2xl border">
           <EnhancedCreationWizard
             open={open}

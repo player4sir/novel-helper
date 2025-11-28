@@ -592,11 +592,14 @@ export class AIService {
 
     return fullPrompt;
   }
+
+
+
   /**
    * Get embedding vector for text
    * Uses the default embedding model
    */
-  async getEmbedding(text: string, userId: string): Promise<number[] | null> {
+  async getEmbedding(text: string, userId?: string): Promise<number[] | null> {
     try {
       const { storage } = await import("./storage");
 
@@ -680,7 +683,7 @@ export class AIService {
   /**
    * Simple generation helper using default model
    */
-  async generateSimple(prompt: string, userId: string, modelId?: string): Promise<string> {
+  async generateSimple(prompt: string, userId?: string, modelId?: string): Promise<string> {
     let targetModelId = modelId;
     let provider = 'openai';
     let baseUrl = '';

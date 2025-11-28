@@ -126,7 +126,8 @@ export class EntityStateService {
   async checkMotivationDrift(
     character: Character,
     content: string,
-    useEmbedding: boolean = true
+    useEmbedding: boolean = true,
+    userId?: string
   ): Promise<MotivationDriftResult> {
     try {
       const motivation = character.shortMotivation || character.personality || "";
@@ -152,7 +153,8 @@ export class EntityStateService {
           const embeddingResult = await this.checkMotivationDriftByEmbedding(
             character.name,
             motivation,
-            content
+            content,
+            userId
           );
 
           // 综合两种方法的结果
@@ -221,7 +223,8 @@ export class EntityStateService {
   private async checkMotivationDriftByEmbedding(
     characterName: string,
     motivation: string,
-    content: string
+    content: string,
+    userId?: string
   ): Promise<MotivationDriftResult> {
     // 导入aiService
     const { aiService } = await import("./ai-service");
@@ -234,10 +237,12 @@ export class EntityStateService {
 
     // 获取动机和行为的embedding
     const motivationEmbedding = await aiService.getEmbedding(
-      `角色动机：${motivation}`
+      `角色动机：${motivation}`,
+      userId
     );
     const behaviorEmbedding = await aiService.getEmbedding(
-      `角色行为：${characterContent}`
+      `角色行为：${characterContent}`,
+      userId
     );
 
     if (!motivationEmbedding || !behaviorEmbedding) {
@@ -451,7 +456,8 @@ export class EntityStateService {
   async checkMultipleCharactersDrift(
     projectId: string,
     content: string,
-    characterNames: string[]
+    characterNames: string[],
+    userId?: string
   ): Promise<Map<string, MotivationDriftResult>> {
     const results = new Map<string, MotivationDriftResult>();
 
@@ -462,7 +468,7 @@ export class EntityStateService {
       );
 
       for (const char of relevantChars) {
-        const result = await this.checkMotivationDrift(char, content, true);
+        const result = await this.checkMotivationDrift(char, content, true, userId);
         results.set(char.name, result);
       }
     } catch (error) {
@@ -479,7 +485,8 @@ export class EntityStateService {
     characterId: string,
     chapterId: string,
     sceneIndex: number,
-    content: string
+    content: string,
+    userId?: string
   ): Promise<void> {
     try {
       const character = await storage.getCharacter(characterId);
@@ -502,12 +509,13 @@ export class EntityStateService {
           // 使用AI提取（更准确）
           const aiExtracted = await this.extractStateWithAI(
             character.name,
-            characterContent
+            characterContent,
+            userId
           );
           emotion = aiExtracted.emotion;
           goal = aiExtracted.goal;
           arcPoint = aiExtracted.arcPoint;
-          
+
           console.log(
             `[Entity State] AI extraction for ${character.name}: ` +
             `emotion=${emotion || 'none'}, goal=${goal || 'none'}, arcPoint=${arcPoint || 'none'}`
@@ -555,7 +563,8 @@ export class EntityStateService {
    */
   private async extractStateWithAI(
     characterName: string,
-    content: string
+    content: string,
+    userId?: string
   ): Promise<{
     emotion?: string;
     goal?: string;
@@ -586,9 +595,9 @@ ${content}
 
     try {
       // 获取默认模型配置
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId || "");
       const defaultModel = models.find(m => m.isDefaultChat && m.isActive);
-      
+
       if (!defaultModel) {
         throw new Error("No default chat model configured");
       }

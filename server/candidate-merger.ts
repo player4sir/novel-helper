@@ -39,7 +39,8 @@ export class CandidateMerger {
   async mergeCandidates(
     candidates: ScoredCandidate[],
     strategy: MergeStrategy,
-    context: ProjectContext
+    context: ProjectContext,
+    userId: string
   ): Promise<ProjectMeta> {
     console.log(`[CandidateMerger] Merging ${candidates.length} candidates using ${strategy} strategy`);
 
@@ -56,13 +57,13 @@ export class CandidateMerger {
 
     switch (strategy) {
       case "llm":
-        return await this.llmMerge(sorted, context);
+        return await this.llmMerge(sorted, context, userId);
       case "heuristic":
         return this.heuristicMerge(sorted);
       case "hybrid":
         // Try LLM first, fallback to heuristic
         try {
-          return await this.llmMerge(sorted, context);
+          return await this.llmMerge(sorted, context, userId);
         } catch (error) {
           console.warn("[CandidateMerger] LLM merge failed, falling back to heuristic");
           return this.heuristicMerge(sorted);
@@ -77,7 +78,8 @@ export class CandidateMerger {
    */
   async llmMerge(
     candidates: ScoredCandidate[],
-    context: ProjectContext
+    context: ProjectContext,
+    userId: string
   ): Promise<ProjectMeta> {
     console.log("[CandidateMerger] Performing LLM merge");
 
@@ -85,7 +87,7 @@ export class CandidateMerger {
     const prompt = this.buildMergePrompt(candidates, context);
 
     // Get AI model
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId);
     const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
     if (!defaultModel) {
@@ -238,7 +240,7 @@ ${candidateDescriptions}
   private selectBestPremise(candidates: ScoredCandidate[]): string {
     // Select longest premise from top candidates
     const topCandidates = candidates.slice(0, 3);
-    const sorted = topCandidates.sort((a, b) => 
+    const sorted = topCandidates.sort((a, b) =>
       (b.candidate.premise?.length || 0) - (a.candidate.premise?.length || 0)
     );
     return sorted[0].candidate.premise;
@@ -249,7 +251,7 @@ ${candidateDescriptions}
    */
   private mergeThemeTags(candidates: ScoredCandidate[]): string[] {
     const allTags = new Set<string>();
-    
+
     for (const candidate of candidates) {
       if (candidate.candidate.themeTags) {
         for (const tag of candidate.candidate.themeTags) {
@@ -353,7 +355,7 @@ ${candidateDescriptions}
    */
   private mergeKeywords(candidates: ScoredCandidate[]): string[] {
     const allKeywords = new Set<string>();
-    
+
     for (const candidate of candidates) {
       if (candidate.candidate.keywords) {
         for (const keyword of candidate.candidate.keywords) {

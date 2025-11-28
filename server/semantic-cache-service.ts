@@ -100,7 +100,8 @@ export class SemanticCacheService {
    */
   async quickVerify(
     cached: CachedExecution,
-    currentSeed: any
+    currentSeed: any,
+    userId: string
   ): Promise<boolean> {
     try {
       // Check if cached result has the expected structure
@@ -154,7 +155,7 @@ ${itemType}数量：${count}个
         return true;
       }
 
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId);
       const smallModel = models.find(
         (m) => m.modelType === "chat" && m.isActive && !m.modelId.toLowerCase().includes("large")
       );
@@ -190,7 +191,7 @@ ${itemType}数量：${count}个
   /**
    * Calculate semantic signature from seed
    */
-  async calculateSignature(seed: any): Promise<{
+  async calculateSignature(seed: any, userId: string): Promise<{
     signature: number[];
     hash: string;
   }> {
@@ -204,7 +205,7 @@ ${itemType}数量：${count}个
       }
 
       // Get embedding
-      const embedding = await aiService.getEmbedding(text);
+      const embedding = await aiService.getEmbedding(text, userId);
 
       if (!embedding) {
         throw new Error("Failed to generate embedding");
@@ -435,7 +436,8 @@ ${itemType}数量：${count}个
   async checkCache(
     templateId: string,
     sceneFrame: any,
-    context: any
+    context: any,
+    userId: string
   ): Promise<{
     hit: boolean;
     draftChunk?: any;
@@ -453,7 +455,7 @@ ${itemType}数量：${count}个
       };
 
       // Calculate semantic signature
-      const { signature, hash } = await this.calculateSignature(seed);
+      const { signature, hash } = await this.calculateSignature(seed, userId);
 
       // Try to find similar cached execution
       const similar = await this.findSimilar(signature, templateId);
@@ -491,7 +493,7 @@ ${itemType}数量：${count}个
       }
 
       // Verify the cached result is still valid
-      const isValid = await this.quickVerify(similar.cached, seed);
+      const isValid = await this.quickVerify(similar.cached, seed, userId);
 
       if (!isValid) {
         console.log("[Cache] Verification failed, cache miss");
@@ -567,7 +569,8 @@ ${itemType}数量：${count}个
     result: any,
     draftChunkId: string,
     tokensUsed: number,
-    qualityScore: number
+    qualityScore: number,
+    userId: string
   ): Promise<void> {
     try {
       // Only cache high-quality results
@@ -579,7 +582,7 @@ ${itemType}数量：${count}个
       }
 
       // Calculate semantic signature
-      const { signature, hash } = await this.calculateSignature(seed);
+      const { signature, hash } = await this.calculateSignature(seed, userId);
 
       // Generate execution ID
       const executionId = `exec_${Date.now()}_${Math.random().toString(36).substring(7)}`;

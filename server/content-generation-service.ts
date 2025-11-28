@@ -4,7 +4,7 @@ import { contextSelectionService } from "./context-selection-service";
 import { asyncTaskQueue } from "./async-task-queue";
 import { modelRoutingService } from "./model-routing-service";
 import { worldSettingSelectionService } from "./world-setting-selection-service";
-import { type Chapter, type SceneFrame, styleProfiles } from "@shared/schema";
+import { type Chapter, type SceneFrame, type Project, styleProfiles } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 
@@ -33,7 +33,15 @@ export class ContentGenerationService {
     ): AsyncGenerator<GenerationEvent, void, unknown> {
         try {
             // 1. Validation & Setup
-            const models = await storage.getAIModels();
+            // @ts-ignore
+            const project = await storage.getProject(projectId);
+            if (!project) {
+                yield { type: "error", error: "Project not found" };
+                return;
+            }
+
+            // @ts-ignore
+            const models = await storage.getAIModels(project.userId || undefined);
             const defaultChatModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
 
             if (!defaultChatModel) {
@@ -192,7 +200,8 @@ export class ContentGenerationService {
                     const stream = sceneDraftService.generateSceneDraftStream(
                         projectId,
                         scene,
-                        draftContext
+                        draftContext,
+                        project.userId
                     );
 
                     let result: any = null;

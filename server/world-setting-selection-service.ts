@@ -5,6 +5,7 @@ export interface WorldSettingSelectionOptions {
     maxCount: number;
     tokenBudget: number;
     threshold: number;
+    userId?: string;
 }
 
 export interface WorldSettingSelectionResult {
@@ -58,7 +59,7 @@ export class WorldSettingSelectionService {
 
         try {
             // Get context embedding
-            const contextEmbedding = await aiService.getEmbedding(context);
+            const contextEmbedding = await aiService.getEmbedding(context, defaultOptions.userId);
             if (!contextEmbedding) {
                 throw new Error("Failed to get context embedding");
             }
@@ -67,7 +68,7 @@ export class WorldSettingSelectionService {
             const scoredSettings = [];
             for (const setting of candidateSettings) {
                 const settingText = `${setting.title}\n${setting.content}`;
-                const settingEmbedding = await aiService.getEmbedding(settingText);
+                const settingEmbedding = await aiService.getEmbedding(settingText, defaultOptions.userId);
 
                 if (settingEmbedding) {
                     const similarity = this.cosineSimilarity(contextEmbedding, settingEmbedding);

@@ -25,6 +25,11 @@ import Statistics from "@/pages/statistics";
 import GenerationLogs from "@/pages/generation-logs";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
+import AdminLayout from "@/pages/admin/layout";
+import AdminDashboard from "@/pages/admin/dashboard";
+import AdminUsers from "@/pages/admin/users";
+import AdminSubscriptions from "@/pages/admin/subscriptions";
+import AdminSettings from "@/pages/admin/settings";
 
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { user, isLoading } = useAuth();
@@ -71,8 +76,6 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 function Router() {
   return (
     <Switch>
-
-
       <Route path="/" component={LandingPage} />
 
       {/* Protected Routes */}
@@ -158,6 +161,36 @@ function Router() {
           <AuthenticatedLayout>
             <Settings />
           </AuthenticatedLayout>
+        )} />
+      </Route>
+
+      {/* Admin Routes */}
+      <Route path="/admin">
+        <ProtectedRoute component={() => (
+          <AdminLayout>
+            <AdminDashboard />
+          </AdminLayout>
+        )} />
+      </Route>
+      <Route path="/admin/users">
+        <ProtectedRoute component={() => (
+          <AdminLayout>
+            <AdminUsers />
+          </AdminLayout>
+        )} />
+      </Route>
+      <Route path="/admin/subscriptions">
+        <ProtectedRoute component={() => (
+          <AdminLayout>
+            <AdminSubscriptions />
+          </AdminLayout>
+        )} />
+      </Route>
+      <Route path="/admin/settings">
+        <ProtectedRoute component={() => (
+          <AdminLayout>
+            <AdminSettings />
+          </AdminLayout>
         )} />
       </Route>
 

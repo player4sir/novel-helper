@@ -31,7 +31,7 @@ export class ConfigService {
    * Get model-specific timeout
    * Returns model's configured timeout or falls back to task-specific default
    */
-  async getModelTimeout(modelId: string, taskType: string): Promise<number> {
+  async getModelTimeout(modelId: string, taskType: string, userId?: string): Promise<number> {
     const cacheKey = `model_timeout:${modelId}`;
     const cached = this.getCached(cacheKey);
     if (cached !== null) {
@@ -40,7 +40,7 @@ export class ConfigService {
 
     try {
       // Try to get model-specific timeout
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId || "");
       const model = models.find((m) => m.id === modelId || m.modelId === modelId);
 
       if (model?.timeout) {

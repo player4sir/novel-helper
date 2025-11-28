@@ -277,7 +277,7 @@ export class RuleCheckerService {
   checkContent(content: string, constraints?: any): RuleCheckResult {
     const startTime = Date.now();
     const violations = this.checkDraftContent(content, constraints);
-    
+
     // Mark auto-fixable violations
     violations.forEach(v => {
       v.autoFixable = this.markAutoFixable(v);
@@ -285,7 +285,7 @@ export class RuleCheckerService {
 
     const executionTime = Date.now() - startTime;
     const errorCount = violations.filter(v => v.severity === "error").length;
-    
+
     let score = 100;
     score -= errorCount * 20;
     score -= violations.filter(v => v.severity === "warning").length * 10;
@@ -338,7 +338,7 @@ export class RuleCheckerService {
     for (const name of characterNames) {
       // Check for common variations
       const variations = this.findNameVariations(content, name);
-      
+
       if (variations.length > 1) {
         violations.push({
           rule: "naming_inconsistency",
@@ -398,7 +398,7 @@ export class RuleCheckerService {
     // Check if entry state is reflected in content
     if (sceneFrame.entryStateSummary) {
       const entryKeywords = this.extractKeywords(sceneFrame.entryStateSummary);
-      const hasEntryReflection = entryKeywords.some(kw => 
+      const hasEntryReflection = entryKeywords.some(kw =>
         content.includes(kw)
       );
 
@@ -416,7 +416,7 @@ export class RuleCheckerService {
     // Check if exit state is reflected in content
     if (sceneFrame.exitStateSummary) {
       const exitKeywords = this.extractKeywords(sceneFrame.exitStateSummary);
-      const hasExitReflection = exitKeywords.some(kw => 
+      const hasExitReflection = exitKeywords.some(kw =>
         content.includes(kw)
       );
 
@@ -441,7 +441,7 @@ export class RuleCheckerService {
   /**
    * Check consistency using small model
    */
-  async checkConsistency(meta: any): Promise<SemanticIssue[]> {
+  async checkConsistency(meta: any, userId?: string): Promise<SemanticIssue[]> {
     const issues: SemanticIssue[] = [];
 
     try {
@@ -474,7 +474,7 @@ export class RuleCheckerService {
 
 如果没有问题，输出：{"hasIssues": false}`;
 
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId || "");
       const smallModel = models.find(
         (m) => m.modelType === "chat" && m.isActive
       );
@@ -511,7 +511,7 @@ export class RuleCheckerService {
   /**
    * Check writability (can it be expanded into a novel?)
    */
-  async checkWritability(meta: any): Promise<{
+  async checkWritability(meta: any, userId?: string): Promise<{
     score: number;
     issues: string[];
   }> {
@@ -534,7 +534,7 @@ export class RuleCheckerService {
   "issues": ["问题1", "问题2"]
 }`;
 
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(userId || "");
       const smallModel = models.find(
         (m) => m.modelType === "chat" && m.isActive
       );
@@ -571,6 +571,7 @@ export class RuleCheckerService {
     options: {
       checkSemantics?: boolean;
       checkWritability?: boolean;
+      userId?: string;
     } = {}
   ): Promise<ValidationResult> {
     // Fast rule checks
@@ -579,7 +580,7 @@ export class RuleCheckerService {
     // Semantic checks (optional, slower)
     let semanticIssues: SemanticIssue[] = [];
     if (options.checkSemantics) {
-      semanticIssues = await this.checkConsistency(meta);
+      semanticIssues = await this.checkConsistency(meta, options.userId);
     }
 
     // Calculate score
@@ -759,7 +760,7 @@ export class RuleCheckerService {
    */
   private extractTimeMarkers(content: string): string[] {
     const markers: string[] = [];
-    
+
     // Common time patterns in Chinese
     const timePatterns = [
       /[一二三四五六七八九十百千]+[年月日天时]/g,

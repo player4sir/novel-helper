@@ -187,7 +187,7 @@ export class EnhancedProjectCreationService {
           console.log("[Cache] No embedding model configured, skipping cache check");
         } else {
           cacheAvailable = true;
-          semanticSig = await semanticCacheService.calculateSignature(seed);
+          semanticSig = await semanticCacheService.calculateSignature(seed, userId);
           const cached = await semanticCacheService.findSimilar(
             semanticSig.signature,
             "project-meta-generation-v2"
@@ -195,7 +195,7 @@ export class EnhancedProjectCreationService {
 
           if (cached) {
             onProgress?.("routing", "running", "验证缓存...", 5);
-            const isValid = await semanticCacheService.quickVerify(cached.cached, seed);
+            const isValid = await semanticCacheService.quickVerify(cached.cached, seed, userId);
 
             if (isValid) {
               console.log(`[Cache HIT] Using cached result (similarity: ${cached.similarity.toFixed(3)})`);

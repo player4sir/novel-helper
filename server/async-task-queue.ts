@@ -116,10 +116,21 @@ export class AsyncTaskQueue {
     console.log('[Async Task] Vectorizing chapter:', data.chapterId);
     try {
       const { vectorizeQueue } = await import("./jobs/queue");
+      // Fetch project to get userId
+      const { db } = await import("./db");
+      const { projects } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const project = await db.query.projects.findFirst({
+        where: eq(projects.id, data.projectId),
+        columns: { userId: true }
+      });
+
       await vectorizeQueue.add("vectorize-chapter", {
         type: 'chapter',
         id: data.chapterId,
-        projectId: data.projectId
+        projectId: data.projectId,
+        userId: project?.userId
       });
     } catch (error) {
       console.error("[Async Task] Failed to add to vectorize queue:", error);

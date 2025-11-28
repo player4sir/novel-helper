@@ -153,6 +153,14 @@ export function AppSidebar() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {user.role === 'admin' && (
+                <DropdownMenuItem asChild>
+                  <Link href="/admin" className="cursor-pointer">
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>管理后台</span>
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem asChild>
                 <Link href="/profile" className="cursor-pointer">
                   <User className="mr-2 h-4 w-4" />

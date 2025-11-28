@@ -198,7 +198,7 @@ export class VolumeChapterGenerationService {
 
         if (summaryText.length > 0) {
           // Use embedding to capture semantic essence
-          const embedding = await aiService.getEmbedding(summaryText);
+          const embedding = await aiService.getEmbedding(summaryText, project.userId || "");
           if (embedding) {
             semanticSummary = `\n\n# 语义摘要\n已有${existingVolumes.length}卷，涵盖主题：${themeTags.slice(0, 5).join("、")}`;
             console.log("[Volume Append] Generated semantic summary with embedding");
@@ -219,14 +219,14 @@ export class VolumeChapterGenerationService {
       let semanticSig: { signature: number[]; hash: string } | null = null;
 
       try {
-        semanticSig = await semanticCacheService.calculateSignature(cacheKey);
+        semanticSig = await semanticCacheService.calculateSignature(cacheKey, project.userId || "");
         const cached = await semanticCacheService.findSimilar(
           semanticSig.signature,
           "volume-append-v2"
         );
 
         if (cached) {
-          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey);
+          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey, project.userId || "");
           if (isValid) {
             console.log(`[Cache HIT] Using cached appended volumes`);
             await semanticCacheService.recordHit(cached.cached.executionId);
@@ -413,14 +413,14 @@ export class VolumeChapterGenerationService {
       let semanticSig: { signature: number[]; hash: string } | null = null;
 
       try {
-        semanticSig = await semanticCacheService.calculateSignature(cacheKey);
+        semanticSig = await semanticCacheService.calculateSignature(cacheKey, project.userId || "");
         const cached = await semanticCacheService.findSimilar(
           semanticSig.signature,
           "volume-generation-v2"
         );
 
         if (cached) {
-          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey);
+          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey, project.userId || "");
           if (isValid) {
             console.log(`[Cache HIT] Using cached volumes (similarity: ${cached.similarity.toFixed(3)})`);
             await semanticCacheService.recordHit(cached.cached.executionId);
@@ -467,7 +467,7 @@ export class VolumeChapterGenerationService {
 
       // Step 5: Generate multiple candidates with fallback
       // Ensure we have full model objects with API keys
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(project.userId || "");
       const primaryModelObj = models.find(m => m.id === routing.primaryModel);
       const fallbackModelObj = routing.fallbackModel ? models.find(m => m.id === routing.fallbackModel) : undefined;
 
@@ -684,7 +684,7 @@ export class VolumeChapterGenerationService {
 
         if (recentSummary.length > 0) {
           // Use embedding to capture narrative flow
-          const embedding = await aiService.getEmbedding(recentSummary);
+          const embedding = await aiService.getEmbedding(recentSummary, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
           if (embedding) {
             const lastSelected = selectedChapters[selectedChapters.length - 1];
             const lastExitState = (lastSelected.outline?.plotNodes as any)?.exitState || "章节结束";
@@ -709,14 +709,14 @@ export class VolumeChapterGenerationService {
       let semanticSig: { signature: number[]; hash: string } | null = null;
 
       try {
-        semanticSig = await semanticCacheService.calculateSignature(cacheKey);
+        semanticSig = await semanticCacheService.calculateSignature(cacheKey, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
         const cached = await semanticCacheService.findSimilar(
           semanticSig.signature,
           "chapter-append-v2"
         );
 
         if (cached) {
-          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey);
+          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
           if (isValid) {
             console.log(`[Cache HIT] Using cached appended chapters`);
             await semanticCacheService.recordHit(cached.cached.executionId);
@@ -774,7 +774,7 @@ export class VolumeChapterGenerationService {
 
       // Step 5: Generate chapters
       // Ensure we have full model objects with API keys
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
       const primaryModelObj = models.find(m => m.id === routing.primaryModel);
       const fallbackModelObj = routing.fallbackModel ? models.find(m => m.id === routing.fallbackModel) : undefined;
 
@@ -960,14 +960,14 @@ export class VolumeChapterGenerationService {
       let semanticSig: { signature: number[]; hash: string } | null = null;
 
       try {
-        semanticSig = await semanticCacheService.calculateSignature(cacheKey);
+        semanticSig = await semanticCacheService.calculateSignature(cacheKey, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
         const cached = await semanticCacheService.findSimilar(
           semanticSig.signature,
           "chapter-generation-v2"
         );
 
         if (cached) {
-          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey);
+          const isValid = await semanticCacheService.quickVerify(cached.cached, cacheKey, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
           if (isValid) {
             console.log(`[Cache HIT] Using cached chapters (similarity: ${cached.similarity.toFixed(3)})`);
             await semanticCacheService.recordHit(cached.cached.executionId);
@@ -1016,7 +1016,7 @@ export class VolumeChapterGenerationService {
 
       // Step 5: Generate chapters with fallback
       // Ensure we have full model objects with API keys
-      const models = await storage.getAIModels();
+      const models = await storage.getAIModels(targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
       const primaryModelObj = models.find(m => m.id === routing.primaryModel);
       const fallbackModelObj = routing.fallbackModel ? models.find(m => m.id === routing.fallbackModel) : undefined;
 

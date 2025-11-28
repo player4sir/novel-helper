@@ -9,8 +9,9 @@ const worker = createWorker(QUEUE_NAMES.VECTORIZE, async (job: Job) => {
     console.log(`[VectorizeWorker] Processing job ${job.id} type=${job.data.type} id=${job.data.id}`);
 
     try {
-        const { type, id } = job.data;
+        const { type, id, userId } = job.data;
         let content = '';
+        let targetUserId = userId;
 
         if (type === 'chapter') {
             const chapter = await db.query.chapters.findFirst({
@@ -21,6 +22,15 @@ const worker = createWorker(QUEUE_NAMES.VECTORIZE, async (job: Job) => {
                 return;
             }
             content = chapter.content;
+
+            // Fallback: get userId from chapter's project if not provided
+            if (!targetUserId) {
+                const project = await db.query.projects.findFirst({
+                    where: eq(projects.id, chapter.projectId),
+                    columns: { userId: true }
+                });
+                targetUserId = project?.userId;
+            }
         } else if (type === 'summary') {
             const summary = await db.query.summaries.findFirst({
                 where: eq(summaries.id, id),
@@ -30,12 +40,21 @@ const worker = createWorker(QUEUE_NAMES.VECTORIZE, async (job: Job) => {
                 return;
             }
             content = summary.content;
+
+            // Fallback: get userId from summary's project if not provided
+            if (!targetUserId) {
+                const project = await db.query.projects.findFirst({
+                    where: eq(projects.id, summary.projectId),
+                    columns: { userId: true }
+                });
+                targetUserId = project?.userId;
+            }
         } else {
             throw new Error(`Unknown vectorization target type: ${type}`);
         }
 
         // Generate embedding
-        const embedding = await aiService.getEmbedding(content);
+        const embedding = await aiService.getEmbedding(content, targetUserId || "");
         if (!embedding) {
             throw new Error('Failed to generate embedding');
         }

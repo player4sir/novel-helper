@@ -31,6 +31,7 @@ export interface RAGRetrievalParams {
     topK?: number;
     timeWindow?: number; // ±N chapters
     useShortSummaries?: boolean;
+    userId?: string;
 }
 
 export interface RAGRetrievalResult {
@@ -89,7 +90,7 @@ export class EnhancedRAGService {
         );
 
         // Stage B: Semantic ranking with pgvector
-        const queryEmbedding = await aiService.getEmbedding(params.query);
+        const queryEmbedding = await aiService.getEmbedding(params.query, params.userId);
         if (!queryEmbedding) {
             console.warn('[RAG] Failed to generate query embedding, falling back to recency-only ranking');
             const recentContexts = this.buildRecentContexts(candidateChapters, topK);

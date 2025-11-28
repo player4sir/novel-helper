@@ -88,7 +88,7 @@ export class ModelRoutingService {
    * Route to appropriate model based on signals
    * Implements the routing algorithm from design document
    */
-  async routeModel(signals: ModelRoutingSignals): Promise<ModelRoutingDecision> {
+  async routeModel(signals: ModelRoutingSignals, userId?: string): Promise<ModelRoutingDecision> {
     // Calculate routing score
     const score = this.calculateScore(signals);
 
@@ -96,7 +96,7 @@ export class ModelRoutingService {
     const features = this.identifyTopFeatures(signals);
 
     // Get available models
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(userId || "");
     const chatModels = models.filter(
       (m) => m.modelType === "chat" && m.isActive
     );
@@ -160,7 +160,7 @@ export class ModelRoutingService {
     const tier = this.INTENT_TO_TIER[params.intent];
 
     // Get all active chat models
-    const models = await storage.getAIModels();
+    const models = await storage.getAIModels(params.projectId ? (await storage.getProject(params.projectId))?.userId || "" : "");
     const chatModels = models.filter(
       (m) => m.modelType === "chat" && m.isActive
     );

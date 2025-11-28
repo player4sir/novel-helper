@@ -665,7 +665,8 @@ export class FewShotExamplesService {
     sceneType: string,
     purpose: string,
     maxExamples: number = 1,
-    useEmbedding: boolean = false
+    useEmbedding: boolean = false,
+    userId?: string
   ): Promise<FewShotExample[]> {
     // 如果启用embedding且有向量模型，使用语义匹配
     if (useEmbedding) {
@@ -673,7 +674,8 @@ export class FewShotExamplesService {
         const semanticResults = await this.getRelevantExamplesByEmbedding(
           sceneType,
           purpose,
-          maxExamples
+          maxExamples,
+          userId
         );
         if (semanticResults.length > 0) {
           return semanticResults;
@@ -719,7 +721,8 @@ export class FewShotExamplesService {
   private async getRelevantExamplesByEmbedding(
     sceneType: string,
     purpose: string,
-    maxExamples: number
+    maxExamples: number,
+    userId?: string
   ): Promise<FewShotExample[]> {
     // 导入aiService（避免循环依赖）
     const { aiService } = await import("./ai-service");
@@ -728,7 +731,7 @@ export class FewShotExamplesService {
     const query = `场景类型：${sceneType}，场景目的：${purpose}`;
 
     // 获取查询的embedding
-    const queryEmbedding = await aiService.getEmbedding(query);
+    const queryEmbedding = await aiService.getEmbedding(query, userId);
     if (!queryEmbedding) {
       throw new Error("Failed to get query embedding");
     }
@@ -738,7 +741,7 @@ export class FewShotExamplesService {
 
     for (const example of this.examples) {
       const exampleText = `场景类型：${example.sceneType}，场景目的：${example.purpose}`;
-      const exampleEmbedding = await aiService.getEmbedding(exampleText);
+      const exampleEmbedding = await aiService.getEmbedding(exampleText, userId);
 
       if (exampleEmbedding) {
         const similarity = this.cosineSimilarity(queryEmbedding, exampleEmbedding);
@@ -783,9 +786,10 @@ export class FewShotExamplesService {
   async buildFewShotModule(
     sceneType: string,
     purpose: string,
-    useEmbedding: boolean = false
+    useEmbedding: boolean = false,
+    userId?: string
   ): Promise<string | null> {
-    const examples = await this.getRelevantExamples(sceneType, purpose, 1, useEmbedding);
+    const examples = await this.getRelevantExamples(sceneType, purpose, 1, useEmbedding, userId);
 
     if (examples.length === 0) {
       return null;
