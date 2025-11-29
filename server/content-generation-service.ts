@@ -158,6 +158,10 @@ export class ContentGenerationService {
                     }
 
                     // Build draft context
+                    const volumeOutline = outlines.find(
+                        (o) => o.type === "volume" && o.linkedVolumeId === chapter.volumeId
+                    );
+
                     const draftContext = {
                         previousContent: i === 0
                             ? previousChapterContent // Use actual text from previous chapter
@@ -169,11 +173,13 @@ export class ContentGenerationService {
                         worldSettings: worldSettingSelection.contextText,
                         sceneFrame: scene,
                         genre: contextData.genre,
-                        projectSummary: mainOutline ? {
-                            coreConflicts: (mainOutline.plotNodes as any)?.coreConflicts?.join("、") || "",
-                            themeTags: (mainOutline.plotNodes as any)?.themeTags?.join("、") || "",
-                            toneProfile: (mainOutline.plotNodes as any)?.toneProfile || project?.style || "",
-                        } : null,
+                        projectSummary: {
+                            description: project.description || "", // Pass project description
+                            coreConflicts: (mainOutline?.plotNodes as any)?.coreConflicts?.join("、") || "",
+                            themeTags: (mainOutline?.plotNodes as any)?.themeTags?.join("、") || "",
+                            toneProfile: (mainOutline?.plotNodes as any)?.toneProfile || project?.style || "",
+                            mainOutlineSummary: mainOutline?.content || (mainOutline?.plotNodes as any)?.summary || "", // Pass main outline content
+                        },
                         chapterOutline: chapterOutline ? {
                             title: chapterOutline.title,
                             summary: (chapterOutline.plotNodes as any)?.oneLiner || "",
@@ -183,6 +189,10 @@ export class ContentGenerationService {
                             stakesDelta: (chapterOutline.plotNodes as any)?.stakesDelta || "",
                             entryState: (chapterOutline.plotNodes as any)?.entryState || "",
                             exitState: (chapterOutline.plotNodes as any)?.exitState || "",
+                        } : undefined,
+                        volumeOutline: volumeOutline ? {
+                            title: volumeOutline.title,
+                            summary: volumeOutline.content || (volumeOutline.plotNodes as any)?.summary || "",
                         } : undefined,
                         currentScene: {
                             index: i,

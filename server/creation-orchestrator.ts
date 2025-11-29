@@ -559,8 +559,8 @@ export class CreationOrchestrator {
           abilities: entity.abilities || "",
           relationships: [], // Initialize empty, will update later
           notes: entityAny.innerConflict
-            ? `分步创建生成\n\n内心冲突：${entityAny.innerConflict}\n隐藏目标：${entityAny.hiddenGoal || '未设置'}`
-            : "分步创建生成",
+            ? `分步创建生成\n\n【角色定位】：${entityAny.specificType || '未指定'}\n【内心冲突】：${entityAny.innerConflict}\n【隐藏目标】：${entityAny.hiddenGoal || '未设置'}`
+            : `分步创建生成\n\n【角色定位】：${entityAny.specificType || '未指定'}`,
           arcPoints: entityAny.arcPoints || [],
           currentEmotion: entityAny.currentEmotion || entityAny.initialEmotion,
           currentGoal: entityAny.currentGoal || entityAny.hiddenGoal || "",
@@ -1060,13 +1060,20 @@ ${worldSetting.factions ? `主要势力：${worldSetting.factions.map((f: any) =
 ${worldSetting.rules?.map((r: any, i: number) => `${i + 1}. ${r.content}`).join("\n") || ""}
 ` : ""}
 
+# 创意增强指令 (CREATIVITY BOOSTER)
+- **风格强化**：大纲的叙事节奏和氛围必须强烈体现"${basicData.style || '标准'}"风格。
+- **反套路情节**：在"转"的阶段，设计一个颠覆性的情节转折，避免观众猜到后续发展。
+- **人物驱动**：确保每一个情节点都是由人物的动机和缺陷驱动的，而不是机械的剧情需要。
+- **主题深化**：情节点必须不断深化"${basicData.themeTags?.join("、") || "核心"}"主题，而不是游离于主题之外。
+
 # 思考过程 (CRITICAL)
 在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
 请按以下步骤推演：
-1. **结构规划**: 根据${genre}类型的节奏特点，规划起承转合的比例。
-2. **冲突编织**: 将核心冲突（${basicData.coreConflicts?.[0] || "主要冲突"}）拆解为具体的事件链。
-3. **角色弧光**: 确保主要情节点能推动主角（${characters[0]?.name || "主角"}）的内心成长。
-4. **高潮设计**: 设计一个既符合逻辑又意料之外的高潮场景。
+1. **风格定调**: 确定${genre}类型下${basicData.style || '标准'}风格的叙事节奏（是快节奏爽文，还是慢节奏悬疑）。
+2. **结构规划**: 根据定调规划起承转合的比例。
+3. **冲突编织**: 将核心冲突（${basicData.coreConflicts?.[0] || "主要冲突"}）拆解为具体的事件链。
+4. **角色弧光**: 确保主要情节点能推动主角（${characters[0]?.name || "主角"}）的内心成长。
+5. **高潮设计**: 设计一个既符合逻辑又意料之外的高潮场景。
 
 # 任务
 请生成一个完整的故事大纲，包括：
@@ -1260,6 +1267,7 @@ ${genreInstructions ? `# 类型特定要求\n${genreInstructions}\n` : ""}
         innerConflict: char.innerConflict,
         hiddenGoal: char.hiddenGoal,
         growthPath: char.growthPath,
+        specificType: char.specificType, // Preserve specificType
       });
     }
 

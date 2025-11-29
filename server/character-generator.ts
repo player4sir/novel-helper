@@ -21,6 +21,7 @@ export interface Character {
   innerConflict: string;  // 内心冲突
   hiddenGoal: string;     // 隐藏目标
   growthPath: string;     // 成长路径
+  specificType?: string;  // 具体类型（如：落魄侦探）
 }
 
 export interface ProjectContext {
@@ -53,6 +54,7 @@ const CharacterSchema = z.object({
   innerConflict: z.string().min(10),
   hiddenGoal: z.string().min(10),
   growthPath: z.string().min(20),
+  specificType: z.string().optional(),
 });
 
 /**
@@ -72,16 +74,13 @@ export class CharacterGenerator {
 
     const characters: Character[] = [];
 
-    // Ensure at least one protagonist
-    if (count > 0) {
-      const protagonist = await this.generateCharacter(context, "主角", userId, options);
-      characters.push(protagonist);
-    }
+    // Plan character roster based on directive
+    const roster = await this.planCharacterRoster(context, count, userId, options);
+    console.log(`[CharacterGenerator] Planned roster:`, roster);
 
-    // Generate remaining characters
-    for (let i = 1; i < count; i++) {
-      // Alternate between supporting and antagonist
-      const role: CharacterRole = i % 3 === 0 ? "反派" : "配角";
+    // Generate characters based on roster
+    for (let i = 0; i < roster.length; i++) {
+      const rosterItem = roster[i];
 
       // Update context with existing characters
       const updatedContext = {
@@ -94,7 +93,13 @@ export class CharacterGenerator {
       // Retry up to 3 times if we get a duplicate name
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const candidate = await this.generateCharacter(updatedContext, role, userId, options);
+          const candidate = await this.generateCharacter(
+            updatedContext,
+            rosterItem.role,
+            userId,
+            options,
+            rosterItem // Pass the specific roster item details
+          );
 
           // Check for duplicates
           const isDuplicate = characters.some(c => c.name === candidate.name) ||
@@ -114,7 +119,13 @@ export class CharacterGenerator {
       // If we still don't have a valid character (or kept getting duplicates), try one last time and force rename if needed
       if (!character) {
         try {
-          character = await this.generateCharacter(updatedContext, role, userId, options);
+          character = await this.generateCharacter(
+            updatedContext,
+            rosterItem.role,
+            userId,
+            options,
+            rosterItem
+          );
           // Force rename if duplicate
           if (characters.some(c => c.name === character!.name)) {
             character.name = `${character.name} (新)`;
@@ -132,18 +143,120 @@ export class CharacterGenerator {
   }
 
   /**
+   * Plan character roster
+   */
+  async planCharacterRoster(
+    context: ProjectContext,
+    count: number,
+    userId: string,
+    options?: GenerationOptions
+  ): Promise<{ role: CharacterRole; description: string; specificType?: string }[]> {
+    console.log(`[CharacterGenerator] Planning roster for ${count} characters`);
+
+    // If no directive, fallback to simple distribution
+    if (!context.characterDirective) {
+      const roster: { role: CharacterRole; description: string }[] = [];
+      // Always 1 protagonist
+      roster.push({ role: "主角", description: "核心主角" });
+
+      for (let i = 1; i < count; i++) {
+        const role: CharacterRole = i % 3 === 0 ? "反派" : "配角";
+        roster.push({ role, description: role === "反派" ? "主要反派" : "重要配角" });
+      }
+      return roster;
+    }
+
+    // Use AI to plan roster based on directive
+    const prompt = `你是一位资深的小说策划专家。请根据以下"角色设计指导原则"，规划一份包含 ${count} 个角色的角色表。
+
+# 项目背景
+${context.title ? `标题：${context.title}` : ""}
+${context.genre ? `类型：${context.genre}` : ""}
+${context.style ? `风格：${context.style}` : ""}
+${context.characterDirective ? `\n# 角色设计指导原则 (CRITICAL)\n${context.characterDirective}` : ""}
+
+# 任务
+请规划 ${count} 个角色的具体身份和定位。
+1. 必须包含至少 1 个主角。
+2. 必须严格遵循"角色设计指导原则"中提到的具体角色身份（如：经纪人、富二代、导师等）。
+3. 如果指导原则中提到的角色少于 ${count} 个，请根据类型风格补充合理的角色。
+4. 角色定位要具体，不要只写"配角"，要写"配角：精明的节目制作人"。
+
+# 输出格式
+请输出一个JSON数组：
+[
+  {
+    "role": "主角/配角/反派/群像",
+    "specificType": "具体身份（如：落魄侦探）",
+    "description": "简要定位描述（20字以内）"
+  }
+]`;
+
+    // Get AI model
+    const models = await storage.getAIModels(userId);
+    const defaultModel = models.find(m => m.modelType === "chat" && m.isDefaultChat && m.isActive);
+
+    if (!defaultModel) return this.fallbackRoster(count);
+
+    try {
+      const result = await aiService.generate({
+        prompt,
+        modelId: defaultModel.modelId,
+        provider: defaultModel.provider,
+        baseUrl: defaultModel.baseUrl || "",
+        apiKey: defaultModel.apiKey || undefined,
+        parameters: { temperature: 0.7, maxTokens: 2000 },
+        responseFormat: "json",
+      });
+
+      const rawJson = extractJSON(result.content);
+      const roster = z.array(z.object({
+        role: z.enum(["主角", "配角", "反派", "群像"]),
+        specificType: z.string().optional(),
+        description: z.string()
+      })).parse(rawJson);
+
+      // Ensure count matches (truncate or pad)
+      if (roster.length > count) {
+        return roster.slice(0, count);
+      }
+
+      while (roster.length < count) {
+        roster.push({ role: "配角", description: "补充配角" });
+      }
+
+      return roster;
+
+    } catch (e) {
+      console.error("[CharacterGenerator] Roster planning failed, using fallback", e);
+      return this.fallbackRoster(count);
+    }
+  }
+
+  private fallbackRoster(count: number) {
+    const roster: { role: CharacterRole; description: string }[] = [];
+    roster.push({ role: "主角", description: "核心主角" });
+    for (let i = 1; i < count; i++) {
+      const role: CharacterRole = i % 3 === 0 ? "反派" : "配角";
+      roster.push({ role, description: role === "反派" ? "主要反派" : "重要配角" });
+    }
+    return roster;
+  }
+
+  /**
    * Generate single character
    */
   async generateCharacter(
     context: ProjectContext,
     role: CharacterRole,
     userId: string,
-    options?: GenerationOptions
+    options?: GenerationOptions,
+    rosterItem?: { role: CharacterRole; description: string; specificType?: string }
   ): Promise<Character> {
-    console.log(`[CharacterGenerator] Generating ${role} character`);
+    console.log(`[CharacterGenerator] Generating ${role} character${rosterItem?.specificType ? `: ${rosterItem.specificType}` : ""}`);
 
     // Build prompt
-    const prompt = this.buildCharacterPrompt(context, role);
+    const prompt = this.buildCharacterPrompt(context, role, rosterItem);
 
     // Get AI model
     const models = await storage.getAIModels(userId);
@@ -213,7 +326,13 @@ export class CharacterGenerator {
           throw new Error(`Character generation validation failed: ${parsed.error.message}`);
         }
 
-        return parsed.data;
+        // Inject specificType from roster if available
+        const characterData = parsed.data;
+        if (rosterItem?.specificType) {
+          characterData.specificType = rosterItem.specificType;
+        }
+
+        return characterData;
 
       } catch (error: any) {
         console.error(`[CharacterGenerator] Error in attempt ${attempt}:`, error.message);
@@ -323,7 +442,11 @@ export class CharacterGenerator {
   /**
    * Build character generation prompt
    */
-  private buildCharacterPrompt(context: ProjectContext, role: CharacterRole): string {
+  private buildCharacterPrompt(
+    context: ProjectContext,
+    role: CharacterRole,
+    rosterItem?: { role: CharacterRole; description: string; specificType?: string }
+  ): string {
     const roleGuidance = {
       "主角": `
 作为主角，这个角色必须：
@@ -335,8 +458,7 @@ export class CharacterGenerator {
 
       "配角": `
 作为配角，这个角色必须：
-- **CRITICAL**: 仔细检查"角色设计指导原则"中是否指定了具体的配角类型（如：制片人、竞争对手、粉丝等）。
-- 如果有指定且尚未生成的角色类型，**必须优先生成该类型**。
+- **CRITICAL**: 必须严格符合指定的身份类型：${rosterItem?.specificType || "未指定"}。
 - 有自己独立的动机和目标
 - 与主角有互补或冲突的性格特点
 - 有自己的成长空间
@@ -344,8 +466,7 @@ export class CharacterGenerator {
 
       "反派": `
 作为反派，这个角色必须：
-- **CRITICAL**: 仔细检查"角色设计指导原则"中是否指定了具体的反派类型。
-- 如果有指定且尚未生成的反派类型，**必须优先生成该类型**。
+- **CRITICAL**: 必须严格符合指定的身份类型：${rosterItem?.specificType || "未指定"}。
 - 有合理的动机，不是单纯的邪恶
 - 有自己的信念和价值观
 - 与主角形成镜像或对比
@@ -363,8 +484,18 @@ export class CharacterGenerator {
     const genre = context.genre || "未指定";
     const genreInstructions = genreConfigService.getGenreSpecificInstructions(genre);
     const genreDescription = genreConfigService.getGenreDescription(genre);
+    const specificTypeInstruction = rosterItem?.specificType
+      ? `\n**核心指令**：请务必生成一个"${rosterItem.specificType}"类型的角色。\n`
+      : "";
 
     return `你是一位资深的小说角色设计专家，擅长创作${genreDescription}。请为以下小说创作一个${role}角色。
+${specificTypeInstruction}
+
+# 创意增强指令 (CREATIVITY BOOSTER)
+- **拒绝套路**：除非特别指定，否则不要生成"高冷总裁"、"废柴逆袭"、"全家被灭"等陈旧人设。
+- **反差萌**：尝试赋予角色与其外表或职业不符的性格特征（例如：胆小的杀手、热爱诗歌的屠夫）。
+- **具体化**：性格描写要"Show, Don't Tell"，不要只说"善良"，要描述"看到路边野猫会忍不住买火腿肠"。
+- **风格化**：角色的语言和行为必须符合"${context.style || '标准'}"的风格要求。
 
 # 项目背景
 ${context.title ? `标题：${context.title}` : ""}

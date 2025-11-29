@@ -250,8 +250,8 @@ export class WorldGenerator {
     // Normalize genre name
     const normalizedGenre = genre.trim();
 
-    console.log(`[WorldGenerator] Looking for template: "${normalizedGenre}"`);
-    console.log(`[WorldGenerator] Available templates:`, Array.from(this.templates.keys()));
+    // console.log(`[WorldGenerator] Looking for template: "${normalizedGenre}"`);
+    // console.log(`[WorldGenerator] Available templates:`, Array.from(this.templates.keys()));
 
     // 1. Try exact match (case-sensitive for Chinese)
     if (this.templates.has(normalizedGenre)) {
@@ -533,13 +533,20 @@ ${context.themeTags && context.themeTags.length > 0 ? `主题：${context.themeT
 ${context.worldRules && context.worldRules.length > 0 ? `世界规则：\n${context.worldRules.join("\n")}` : ""}
 ${(context as any).worldDirective ? `\n# 世界观指导原则\n${(context as any).worldDirective}\n` : ""}
 
+# 创意增强指令 (CREATIVITY BOOSTER)
+- **拒绝平庸**：不要直接照搬常见的设定（如标准的修真等级、普通的魔法学院）。
+- **独特组合**：尝试将${genre}元素与其他意想不到的元素结合（例如：赛博朋克风格的修仙界、蒸汽朋克风格的魔法世界）。
+- **反直觉规则**：设计一条反直觉但逻辑自洽的核心规则（例如："在这个世界，谎言会变成实体怪物"）。
+- **风格契合**：世界观的氛围必须符合"${context.style || '标准'}"的风格要求。
+
 # 思考过程 (CRITICAL)
 在生成最终 JSON 之前，你**必须**先进行深度思考，包裹在 <thinking> 标签中。
 请按以下步骤推演：
 1. **类型适配**: 思考${genre}类型的核心世界观要素（如${template.requiredElements.join("、")}）。
-2. **规则构建**: 设计 3 条核心规则，确保它们能产生有趣的冲突。
-3. **势力平衡**: 构思主要势力，确保它们之间存在动态平衡或对抗。
-4. **逻辑自洽**: 检查力量体系和世界规则是否矛盾。
+2. **创意突破**: 构思一个核心的"世界观扭曲点"（Twist），让这个世界与众不同。
+3. **规则构建**: 设计 3 条核心规则，围绕这个扭曲点展开。
+4. **势力平衡**: 构思主要势力，确保它们之间存在动态平衡或对抗。
+5. **逻辑自洽**: 检查力量体系和世界规则是否矛盾。
 
 # 类型特点
 ${template.commonRules.length > 0 ? `常见规则：\n${template.commonRules.map((r, i) => `${i + 1}. ${r}`).join("\n")}` : ""}
@@ -628,7 +635,7 @@ ${template.optionalElements.includes("items") ? `
   ${template.requiredElements.includes("factions") ? `"factions": [
     {
       "name": "势力名称",
-      "type": "势力类型",
+      "type": "势力类型（如：宗门/公司/教会）",
       "description": "势力描述（50-100字）",
       "goals": ["目标1", "目标2"],
       "influence": 0.8
@@ -653,12 +660,13 @@ ${template.optionalElements.includes("items") ? `
 
 **重要**：
 1. 所有内容必须使用纯正的中文
-2. 力量体系要有明确的限制，避免无限膨胀
-3. 世界规则要自洽，不能互相矛盾
-4. 势力影响力总和不要超过1.5
-5. 避免常见俗套设定，要有创新性
-6. 规则优先级：1-10，数字越大越重要
-7. **注意：如果字符串内部包含双引号，必须使用反斜杠转义（例如：\\"价值\\"）**`;
+2. **CRITICAL**: "factions"数组中的每个对象必须包含 "type" 和 "goals" 字段，绝对不能省略。
+3. 力量体系要有明确的限制，避免无限膨胀
+4. 世界规则要自洽，不能互相矛盾
+5. 势力影响力总和不要超过1.5
+6. 避免常见俗套设定，要有创新性
+7. 规则优先级：1-10，数字越大越重要
+8. **注意：如果字符串内部包含双引号，必须使用反斜杠转义（例如：\\"价值\\"）**`;
   }
 
   /**

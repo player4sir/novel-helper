@@ -2102,11 +2102,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const focalEntities = chapterPlotNodes.focalEntities || requiredEntities.slice(0, 2);
 
       const context = {
-        projectSummary: mainOutline ? {
-          coreConflicts: ((mainOutline.plotNodes as any)?.coreConflicts || []).join("\n"),
-          themeTags: ((mainOutline.plotNodes as any)?.themeTags || []).join("、"),
+        projectSummary: {
+          description: project.description || "",
+          coreConflicts: ((mainOutline?.plotNodes as any)?.coreConflicts || []).join("\n"),
+          themeTags: ((mainOutline?.plotNodes as any)?.themeTags || []).join("、"),
           toneProfile: project?.style || "",
-        } : null,
+          mainOutlineSummary: mainOutline?.content || (mainOutline?.plotNodes as any)?.summary || "",
+        },
         characters: characters
           .filter((c) => focalEntities.includes(c.name))
           .map((c) => ({

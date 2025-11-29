@@ -24,6 +24,9 @@ export interface PromptContext {
   previousSummary?: string;
   chapterSummarySoFar?: string; // Added chapter summary so far
   storyContext?: string; // Added story context
+  projectDescription?: string; // Added project description
+  mainOutlineSummary?: string; // Added main outline summary
+  volumeOutlineSummary?: string; // Added volume outline summary
   worldSettings?: string; // Added world settings
 }
 
@@ -177,7 +180,10 @@ export class PromptTemplateService {
       '{required_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // Keep for backward compatibility
       '{available_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // New semantic name
       '{character_info}': characterInfo,
-      '{project_summary}': '', // Removed placeholder
+      '{project_summary}': context.projectDescription || '', // Use description as summary
+      '{project_description}': context.projectDescription || '（暂无简介）', // New placeholder
+      '{main_outline_summary}': context.mainOutlineSummary || '（暂无总纲）', // New placeholder
+      '{volume_outline_summary}': context.volumeOutlineSummary || '（暂无本卷概要）', // New placeholder
       '{chapter_outline}': '', // Removed placeholder
       '{world_settings}': context.worldSettings || '（暂无特殊世界观设定）',
       '{story_context}': context.storyContext || '',
@@ -307,6 +313,15 @@ export class PromptTemplateService {
 ═══════════════════════════════════════════
 ## 【创作参考信息】（用于指导创作，选择性使用）
 ═══════════════════════════════════════════
+
+**故事简介**：
+{project_description}
+
+**总纲概要**：
+{main_outline_summary}
+
+**本卷概要**：
+{volume_outline_summary}
 
 **世界观设定**：
 {world_settings}
@@ -454,6 +469,17 @@ export class PromptTemplateService {
     if (lowerStyle.includes("爽文") || lowerStyle.includes("cool")) {
       enforcement += "极力铺垫情绪，突出主角的装逼打脸和绝对优势，节奏要快。";
     }
+    if (lowerStyle.includes("求生") || lowerStyle.includes("survival") || lowerStyle.includes("荒野") || lowerStyle.includes("wilderness")) {
+      enforcement += "强调资源匮乏的紧迫感，详细描写环境的恶劣和生存技能的运用，突出原始与现代的冲突。";
+    }
+    if (lowerStyle.includes("都市") || lowerStyle.includes("urban")) {
+      enforcement += "注重现实感，对话要符合现代人口语习惯，强调人际关系的微妙和社会规则的制约。";
+    }
+
+    // Fallback: If no specific keywords matched, pass the style tag directly as a requirement
+    if (!enforcement && style) {
+      enforcement = `请重点体现"${style}"的风格特征。`;
+    }
 
     return enforcement || "请严格遵循设定的风格基调进行创作。";
   }
@@ -496,6 +522,10 @@ export class PromptTemplateService {
       '言情': `
 - **情感细腻**：注重人物内心活动和情感变化，多用心理描写和细节暗示。
 - **互动自然**：角色间的互动要有张力和化学反应，避免直白的"我喜欢你"式告白。`,
+
+      '都市': `
+- **现实质感**：场景描写需具有现代生活的烟火气，避免悬浮感。
+- **社会关系**：准确把握职场、家庭、朋友等不同社交场合的语言风格差异。`,
 
       '历史': `
 - **语言考究**：使用符合时代特色的语言风格，避免现代网络用语。

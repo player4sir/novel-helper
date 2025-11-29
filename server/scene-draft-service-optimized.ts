@@ -25,9 +25,11 @@ export interface DraftContext {
   genre?: string; // Added genre
   sceneFrame?: SceneFrame;
   projectSummary?: {
+    description: string; // Added project description
     coreConflicts: string;
     themeTags: string;
     toneProfile: string;
+    mainOutlineSummary: string; // Added main outline summary
   } | null;
   chapterOutline?: {
     title: string;
@@ -38,6 +40,10 @@ export interface DraftContext {
     stakesDelta: string;
     entryState: string;
     exitState: string;
+  };
+  volumeOutline?: {
+    title: string;
+    summary: string;
   };
   currentScene?: {
     index: number;
@@ -679,6 +685,9 @@ export class SceneDraftServiceOptimized {
       previousSummary: context.previousContent || '', // Use full content passed from service
       chapterSummarySoFar: context.chapterSummarySoFar || '', // Pass chapter summary
       storyContext: context.storyContext || '', // Pass story context
+      projectDescription: context.projectSummary?.description || '', // Pass project description
+      mainOutlineSummary: context.projectSummary?.mainOutlineSummary || '', // Pass main outline summary
+      volumeOutlineSummary: context.volumeOutline?.summary || '', // Pass volume outline summary
       worldSettings: (context.globalMemory ? `【全局关键规则】\n${context.globalMemory}\n\n` : '') + (this.chapterComponentCache.get(chapterId)?.worldSettings || context.worldSettings || ''),
       negativeConstraints: `
 - **禁止AI惯用语**：严禁使用"心中一动"、"不由得"、"嘴角勾起"、"眼神一凝"、"倒吸一口凉气"等陈词滥调。
