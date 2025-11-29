@@ -8,14 +8,37 @@ const app = express();
 
 // CORS 配置 - 允许移动端访问
 app.use(cors({
-  origin: process.env.NODE_ENV === "production"
-    ? [
+  origin: (origin, callback) => {
+    // 允许没有 origin 的请求 (如移动端 apps, curl 请求)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = [
       /\.zeabur\.app$/,  // Zeabur 域名
       /\.pages\.dev$/,  // Cloudflare Pages
       /capacitor:\/\//,  // Capacitor 应用
       /http:\/\/localhost/,  // 本地开发
-    ]
-    : true,  // 开发环境允许所有来源
+    ];
+
+    // 检查环境变量中的额外允许域名
+    if (process.env.ALLOWED_ORIGINS) {
+      const extraOrigins = process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim());
+      if (extraOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+    }
+
+    // 检查默认允许的域名模式
+    const isAllowed = allowedOrigins.some(pattern =>
+      pattern instanceof RegExp ? pattern.test(origin) : pattern === origin
+    );
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.log(`[CORS] Blocked request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 
@@ -103,6 +126,11 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
-    serveStatic(app);
+    // In production, only serve static files if NOT in API-only mode
+    if (process.env.API_ONLY !== "true") {
+      serveStatic(app);
+    } else {
+      log("Running in API_ONLY mode, skipping static file serving");
+    }
   }
 })();
