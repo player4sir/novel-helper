@@ -61,6 +61,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Middleware to check authentication
   const isAuthenticated = (req: any, res: any, next: any) => {
+    console.log(`[Auth Check] ${req.method} ${req.path} - SessionID: ${req.sessionID}, User: ${req.user?.id}, IsAuth: ${req.isAuthenticated()}`);
     if (req.isAuthenticated()) {
       return next();
     }

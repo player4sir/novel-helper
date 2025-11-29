@@ -10,7 +10,11 @@ const app = express();
 app.use(cors({
   origin: (origin, callback) => {
     // 允许没有 origin 的请求 (如移动端 apps, curl 请求)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log("[CORS Debug] No origin");
+      return callback(null, true);
+    }
+    console.log(`[CORS Debug] Checking origin: ${origin}`);
 
     const allowedOrigins = [
       /\.zeabur\.app$/,  // Zeabur 域名

@@ -82,9 +82,11 @@ export function setupAuth(app: Express) {
 
     passport.deserializeUser(async (id: string, done) => {
         try {
+            console.log(`[Auth Debug] Deserializing user ${id}`);
             const [user] = await db.select().from(users).where(eq(users.id, id)).limit(1);
             done(null, user);
         } catch (err) {
+            console.error(`[Auth Debug] Deserialize error:`, err);
             done(err);
         }
     });
