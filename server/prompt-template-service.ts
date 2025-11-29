@@ -22,6 +22,7 @@ export interface PromptContext {
   estimatedWords: number;
   styleGuidelines?: string;
   previousSummary?: string;
+  chapterSummarySoFar?: string; // Added chapter summary so far
   storyContext?: string; // Added story context
   worldSettings?: string; // Added world settings
 }
@@ -172,6 +173,7 @@ export class PromptTemplateService {
       '{style_enforcement}': this.generateStyleEnforcement(context.styleGuidelines || ''),
       '{prev_compact_summary}': context.previousSummary || '（本章开始）',
       '{previous_content}': context.previousSummary || '（本章开始）', // New semantic name
+      '{chapter_summary_so_far}': context.chapterSummarySoFar || '（本章刚开始）', // New placeholder
       '{required_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // Keep for backward compatibility
       '{available_characters_brief}': context.characters.map(c => `${c.name} (${c.role})`).join('、'), // New semantic name
       '{character_info}': characterInfo,
@@ -326,6 +328,11 @@ export class PromptTemplateService {
 {story_context}
 """
 
+**本章剧情回顾**（本章已发生的内容，请务必保持连贯，不要重复已发生的情节，不要产生逻辑冲突）:
+"""
+{chapter_summary_so_far}
+"""
+
 **上文结尾**（已经写完的内容，请直接从此处继续）:
 """
 {previous_content}
@@ -337,6 +344,8 @@ export class PromptTemplateService {
 
 0. **深度思维链规划（Deep CoT）**：
    在正式写作前，你**必须**先输出一个 \`<thinking>\` 标签块，进行以下推演：
+   - **状态一致性检查（State Check）**：检查"场景创作目标"是否与"本章剧情回顾"或"上文结尾"冲突。
+     - 如果冲突（例如目标是"去报名"，但回顾中"已报名成功"），请以**已发生的事实**为准，调整本场景目标为后续发展（如"准备初赛"），**绝不要**推翻已发生的事实。
    - **场景类型分析**：本场景属于什么类型？（战斗/情感/悬疑/日常/过渡）
    - **写作策略制定**：基于场景类型，决定使用什么句式节奏？（如：战斗用短句，情感用心理描写）
    - **情感基调设定**：本场景的核心情绪是什么？（压抑/热血/温馨/诡异）
@@ -345,6 +354,7 @@ export class PromptTemplateService {
 
    *格式示例*：
    \`<thinking>
+   状态检查：目标与上文一致，无冲突。
    类型：高强度战斗
    策略：多用动词，少用形容词，短句为主，强调速度感。
    基调：紧迫、生死一线

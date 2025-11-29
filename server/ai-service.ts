@@ -272,12 +272,17 @@ export class AIService {
     let effectiveProvider = provider;
 
     if (contextConfig) {
-      // If the request is using the "custom" or default provider, or if we just want to force the local config
-      // We assume if x-ai-config is present, the user INTENDS to use it.
-      effectiveApiKey = contextConfig.apiKey;
-      effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
-      effectiveModelId = contextConfig.modelId;
-      effectiveProvider = contextConfig.provider;
+      // Validate model type for chat generation
+      if (contextConfig.modelType === "chat") {
+        effectiveApiKey = contextConfig.apiKey;
+        effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
+        effectiveModelId = contextConfig.modelId;
+        effectiveProvider = contextConfig.provider;
+      } else {
+        console.warn(
+          `[AI Service] Ignoring context config: Model type mismatch. Expected 'chat', got '${contextConfig.modelType}'. Using default/requested model instead.`
+        );
+      }
     }
 
     effectiveApiKey = effectiveApiKey || this.getDefaultApiKey(effectiveProvider);
@@ -408,10 +413,17 @@ export class AIService {
     let effectiveProvider = provider;
 
     if (contextConfig) {
-      effectiveApiKey = contextConfig.apiKey;
-      effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
-      effectiveModelId = contextConfig.modelId;
-      effectiveProvider = contextConfig.provider;
+      // Validate model type for chat generation
+      if (contextConfig.modelType === "chat") {
+        effectiveApiKey = contextConfig.apiKey;
+        effectiveBaseUrl = contextConfig.baseUrl || baseUrl;
+        effectiveModelId = contextConfig.modelId;
+        effectiveProvider = contextConfig.provider;
+      } else {
+        console.warn(
+          `[AI Service] Ignoring context config: Model type mismatch. Expected 'chat', got '${contextConfig.modelType}'. Using default/requested model instead.`
+        );
+      }
     }
 
     effectiveApiKey = effectiveApiKey || this.getDefaultApiKey(effectiveProvider);

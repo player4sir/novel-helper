@@ -234,7 +234,7 @@ export class EnhancedProjectCreationService {
 
       // Step 2: Route to appropriate model
       onProgress?.("routing", "running", "选择最佳模型...", 12);
-      const routing = await modelRoutingService.routeModel(signals);
+      const routing = await modelRoutingService.routeModel(signals, userId);
       console.log(`[Model Routing] ${routing.reasoning}`);
       onProgress?.("routing", "completed", `已选择: ${routing.primaryModel}`, 15);
 

@@ -454,11 +454,13 @@ export class ContextSelectionService {
   /**
    * Select recent chapters for chapter append
    * Focuses on narrative continuity
+   * Automatically filters out future chapters to prevent causality violations
    */
   async selectRecentChaptersForAppend(
     allChapters: Chapter[],
     allOutlines: Outline[],
     nextChapterPurpose: string,
+    currentChapterId: string,
     options: Partial<ContextSelectionOptions> = {}
   ): Promise<ContextSelectionResult> {
     const defaultOptions: ContextSelectionOptions = {
@@ -470,8 +472,14 @@ export class ContextSelectionService {
       ...options,
     };
 
+    // Filter out future chapters
+    const currentChapter = allChapters.find(c => c.id === currentChapterId);
+    const pastChapters = currentChapter
+      ? allChapters.filter(c => c.orderIndex < currentChapter.orderIndex)
+      : allChapters;
+
     return this.selectRelevantChapters(
-      allChapters,
+      pastChapters,
       allOutlines,
       `下一章目的：${nextChapterPurpose}，需要选择相关章节保持叙事连贯`,
       defaultOptions

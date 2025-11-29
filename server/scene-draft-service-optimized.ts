@@ -17,6 +17,7 @@ import { createHash } from "crypto";
 
 export interface DraftContext {
   previousContent?: string;
+  chapterSummarySoFar?: string; // Added chapter summary so far
   storyContext?: string; // Added story context
   characters?: Character[] | any[]; // Allow both full Character type and partial character objects
   worldSettings?: string;
@@ -264,7 +265,8 @@ export class SceneDraftServiceOptimized {
           entryStateSummary: i === 0 ? plotNodes.entryState : `承接场景${i}`,
           exitStateSummary: i === sceneGroups.length - 1 ? plotNodes.exitState : `引出场景${i + 2}`,
           focalEntities: this.distributeFocalEntities(focalEntities, i, sceneGroups.length),
-          tokensEstimate: Math.ceil(this.calculateSceneWords(sceneGroup.beats, sceneGroup.avgComplexity) / 3.5),
+          // Fix: Multiply by 1.5 for token estimate (1 word ~= 1.5 tokens), don't divide
+          tokensEstimate: Math.ceil(this.calculateSceneWords(sceneGroup.beats, sceneGroup.avgComplexity) * 1.5),
         });
 
         scenes.push(sceneFrame);
@@ -478,7 +480,27 @@ export class SceneDraftServiceOptimized {
 
       // Step 4: Generate Stream
       const aiTimer = perfMonitor.startTimer('ai_generation');
-      const targetWords = sceneFrame.tokensEstimate ? Math.ceil(sceneFrame.tokensEstimate * 0.75) : 2000;
+
+      // Fix: Correctly calculate target words and max tokens
+      // Handle legacy low estimates (where it was words / 3.5) vs new estimates (words * 1.5)
+      let targetWords = this.SCENE_TARGET_WORDS;
+      if (sceneFrame.tokensEstimate) {
+        if (sceneFrame.tokensEstimate < 1000) {
+          // Legacy: estimate was result of division, restore to words
+          targetWords = sceneFrame.tokensEstimate * 3.5;
+        } else {
+          // New: estimate is tokens, convert to words (approx)
+          targetWords = sceneFrame.tokensEstimate / 1.5;
+        }
+      }
+
+      // Ensure target words is within reasonable bounds (2000-5000)
+      targetWords = Math.max(2000, Math.min(5000, targetWords));
+
+      // Calculate maxTokens with sufficient buffer
+      // 1 Chinese char can be 1-2 tokens. We want to be safe.
+      // Target words + 100% buffer + 1000 constant buffer
+      const maxTokens = Math.ceil(targetWords * 2.0) + 1000;
 
       let generatedContent = "";
       const stream = await aiService.generateStream({
@@ -489,7 +511,7 @@ export class SceneDraftServiceOptimized {
         apiKey: modelConfig.apiKey,
         parameters: {
           temperature: 0.7,
-          maxTokens: Math.ceil(targetWords / 0.35),
+          maxTokens: Math.min(8000, maxTokens), // Cap at 8000 to be safe
         },
       });
 
@@ -597,7 +619,7 @@ export class SceneDraftServiceOptimized {
         promptMetadata: { sceneIndex: sceneFrame.index },
         modelId: modelConfig.modelId,
         modelVersion: modelConfig.provider,
-        params: { temperature: 0.7, maxTokens: Math.ceil(targetWords / 0.35) },
+        params: { temperature: 0.7, maxTokens: Math.min(4000, Math.ceil(targetWords / 0.6)) },
         responseHash: this.hashContent(generatedContent),
         responseSummary: draftChunk.localSummary || '',
         tokensUsed: estimatedTokens,
@@ -655,6 +677,7 @@ export class SceneDraftServiceOptimized {
       genre: context.genre || '奇幻',
       styleGuidelines: context.projectSummary?.toneProfile || '',
       previousSummary: context.previousContent || '', // Use full content passed from service
+      chapterSummarySoFar: context.chapterSummarySoFar || '', // Pass chapter summary
       storyContext: context.storyContext || '', // Pass story context
       worldSettings: (context.globalMemory ? `【全局关键规则】\n${context.globalMemory}\n\n` : '') + (this.chapterComponentCache.get(chapterId)?.worldSettings || context.worldSettings || ''),
       negativeConstraints: `

@@ -160,7 +160,34 @@ export class ModelRoutingService {
     const tier = this.INTENT_TO_TIER[params.intent];
 
     // Get all active chat models
+    // Get all active models
     const models = await storage.getAIModels(params.projectId ? (await storage.getProject(params.projectId))?.userId || "" : "");
+
+    // Handle Embedding Intent specifically
+    if (params.intent === Intent.EMBEDDING) {
+      const embeddingModel = models.find(
+        (m) => m.modelType === "embedding" && m.isDefaultEmbedding && m.isActive
+      ) || models.find(
+        (m) => m.modelType === "embedding" && m.isActive
+      );
+
+      if (!embeddingModel) {
+        throw new Error("没有可用的向量模型");
+      }
+
+      return {
+        strategy: "small",
+        primaryModel: embeddingModel.id,
+        fallbackModel: undefined,
+        reasoning: `Intent: ${params.intent}, Selected default embedding model`,
+        confidence: 1.0,
+        routingScore: 1.0,
+        tier: ModelTier.SPECIALIZED,
+        intent: params.intent,
+      };
+    }
+
+    // Filter for chat models for other intents
     const chatModels = models.filter(
       (m) => m.modelType === "chat" && m.isActive
     );

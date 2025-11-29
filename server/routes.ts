@@ -239,28 +239,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         req.user!.id,
         (step, status, message, progress, metadata) => {
-          session.push({
-            type: "progress",
-            step,
-            status,
-            message,
-            progress,
-            metadata
-          });
+          if (session.isConnected) {
+            session.push({
+              type: "progress",
+              step,
+              status,
+              message,
+              progress,
+              metadata
+            });
+          }
         },
         true // skipFinalize = true
       );
 
-      session.push({
-        type: "completed",
-        result
-      });
+      if (session.isConnected) {
+        session.push({
+          type: "completed",
+          result
+        });
+      }
     } catch (error: any) {
       console.error("[API] Auto creation failed:", error);
-      session.push({
-        type: "error",
-        error: error.message
-      });
+      if (session.isConnected) {
+        session.push({
+          type: "error",
+          error: error.message
+        });
+      }
     }
   });
 
@@ -1026,13 +1032,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       for await (const event of generator) {
-        session.push(event);
+        if (session.isConnected) {
+          session.push(event);
+        } else {
+          break;
+        }
       }
 
-      session.push({ type: "done" });
+      if (session.isConnected) {
+        session.push({ type: "done" });
+      }
     } catch (error: any) {
       console.error("[Chapter Generation] Error:", error);
-      session.push({ type: "error", error: error.message });
+      if (session.isConnected) {
+        session.push({ type: "error", error: error.message });
+      }
     }
   });
 

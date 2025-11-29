@@ -249,7 +249,7 @@ export class VolumeChapterGenerationService {
       );
 
       // Step 3: Route to appropriate model
-      const routing = await modelRoutingService.routeModel(signals);
+      const routing = await modelRoutingService.routeModel(signals, project.userId || undefined);
       console.log(`[Volume Append] ${routing.reasoning}`);
 
       // Step 4: Build prompt with existing context (enhanced with semantic summary)
@@ -443,7 +443,7 @@ export class VolumeChapterGenerationService {
       );
 
       // Step 3: Route to appropriate model
-      const routing = await modelRoutingService.routeModel(signals);
+      const routing = await modelRoutingService.routeModel(signals, project.userId || undefined);
       console.log(`[Volume Generation] ${routing.reasoning}`);
 
       // Step 4: Build prompt with enhanced context
@@ -650,6 +650,7 @@ export class VolumeChapterGenerationService {
         volumeChapters,
         chapterOutlines,
         `继续${targetVolume.title}的故事，保持叙事连贯性`,
+        "", // No current chapter ID for append mode (use all existing chapters)
         {
           maxCount: 5,
           tokenBudget: 1200,
@@ -739,7 +740,7 @@ export class VolumeChapterGenerationService {
       );
 
       // Step 3: Route to appropriate model
-      const routing = await modelRoutingService.routeModel(signals);
+      const routing = await modelRoutingService.routeModel(signals, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
       console.log(`[Chapter Append] ${routing.reasoning}`);
 
       // Calculate narrative progress
@@ -990,7 +991,7 @@ export class VolumeChapterGenerationService {
       );
 
       // Step 3: Route to appropriate model
-      const routing = await modelRoutingService.routeModel(signals);
+      const routing = await modelRoutingService.routeModel(signals, targetVolume.projectId ? (await storage.getProject(targetVolume.projectId))?.userId || "" : "");
       console.log(`[Chapter Generation] ${routing.reasoning}`);
 
       // Step 4: Build prompt with enhanced context

@@ -9,7 +9,7 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 
 export interface GenerationEvent {
-    type: "connected" | "progress" | "scenes_decomposed" | "scene_start" | "thinking_start" | "thinking_end" | "scene_content_chunk" | "scene_completed" | "scene_failed" | "completed" | "error";
+    type: "connected" | "progress" | "scenes_decomposed" | "scene_start" | "thinking_start" | "thinking_end" | "content_chunk" | "scene_completed" | "scene_failed" | "completed" | "error";
     data?: any;
     error?: string;
 }
@@ -115,9 +115,9 @@ export class ContentGenerationService {
                 yield {
                     type: "scene_start",
                     data: {
-                        sceneIndex: i,
-                        totalScenes: scenes.length,
-                        scenePurpose: scene.purpose,
+                        index: i,
+                        total: scenes.length,
+                        purpose: scene.purpose,
                         progress: progressBase,
                         message: `正在生成第 ${i + 1}/${scenes.length} 个场景...`
                     }
@@ -128,7 +128,8 @@ export class ContentGenerationService {
                     const contextSelection = await contextSelectionService.selectRecentChaptersForAppend(
                         await storage.getChaptersByProject(projectId),
                         outlines,
-                        scene.purpose
+                        scene.purpose,
+                        chapterId
                     );
 
                     // Select relevant world settings
@@ -161,6 +162,7 @@ export class ContentGenerationService {
                         previousContent: i === 0
                             ? previousChapterContent // Use actual text from previous chapter
                             : this.getSmartContextWindow(generatedContent, 2000), // Use smart window
+                        chapterSummarySoFar: i > 0 ? this.generateChapterSummarySoFar(generatedContent) : "", // New: Pass summary of current chapter so far
                         storyContext: contextSelection.contextText, // Pass semantic context separately
                         characters: this.filterRelevantCharacters(characters, chapterOutline, scene),
                         globalMemory: worldSettingSelection.globalSettings?.map(s => `${s.title}: ${s.content}`).join("\n") || "",
@@ -237,10 +239,10 @@ export class ContentGenerationService {
                                     if (cleanPart) {
                                         sceneContent += cleanPart;
                                         yield {
-                                            type: "scene_content_chunk",
+                                            type: "content_chunk",
                                             data: {
                                                 sceneIndex: i,
-                                                chunk: cleanPart,
+                                                content: cleanPart,
                                                 currentLength: sceneContent.length
                                             }
                                         };
@@ -261,10 +263,10 @@ export class ContentGenerationService {
                                     if (cleanPart) {
                                         sceneContent += cleanPart;
                                         yield {
-                                            type: "scene_content_chunk",
+                                            type: "content_chunk",
                                             data: {
                                                 sceneIndex: i,
-                                                chunk: cleanPart,
+                                                content: cleanPart,
                                                 currentLength: sceneContent.length
                                             }
                                         };
@@ -283,10 +285,10 @@ export class ContentGenerationService {
                                 if (cleanChunk) {
                                     sceneContent += cleanChunk;
                                     yield {
-                                        type: "scene_content_chunk",
+                                        type: "content_chunk",
                                         data: {
                                             sceneIndex: i,
-                                            chunk: cleanChunk,
+                                            content: cleanChunk,
                                             currentLength: sceneContent.length
                                         }
                                     };
@@ -310,10 +312,10 @@ export class ContentGenerationService {
                             if (cleanPart) {
                                 sceneContent += cleanPart;
                                 yield {
-                                    type: "scene_content_chunk",
+                                    type: "content_chunk",
                                     data: {
                                         sceneIndex: i,
-                                        chunk: cleanPart,
+                                        content: cleanPart,
                                         currentLength: sceneContent.length
                                     }
                                 };
@@ -521,6 +523,25 @@ export class ContentGenerationService {
 
         // Hard fallback
         return content.slice(-maxChars);
+    }
+
+    /**
+     * Generate a simple summary of the chapter so far
+     * In a real implementation, this could call an LLM to summarize.
+     * For now, we'll extract the local summaries if available, or just take the last few paragraphs.
+     */
+    private generateChapterSummarySoFar(content: string): string {
+        if (!content) return "";
+        // Simple heuristic: Take the last 500 chars as immediate context "summary"
+        // Ideally, we would have stored per-scene summaries and concatenated them here.
+        // Since we don't have easy access to previous scene objects here without refactoring,
+        // we will use a sliding window of the generated content as a proxy for "what happened so far".
+        // But to be more effective for the prompt, let's try to capture more.
+
+        const length = content.length;
+        if (length < 1000) return content;
+
+        return "..." + content.slice(-1000);
     }
 }
 
