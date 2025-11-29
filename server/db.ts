@@ -77,3 +77,21 @@ if (!process.env.DATABASE_URL) {
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle({ client: pool, schema });
+
+// Initialize database tables
+const initDb = async () => {
+  try {
+    const migrationPath = path.join(currentDirname, 'migrations', 'create_session_table.sql');
+    if (fs.existsSync(migrationPath)) {
+      const sql = fs.readFileSync(migrationPath, 'utf-8');
+      await pool.query(sql);
+      console.log('✓ Session table created/verified');
+    } else {
+      console.warn('⚠ Session migration file not found:', migrationPath);
+    }
+  } catch (err) {
+    console.error('✗ Failed to initialize database:', err);
+  }
+};
+
+initDb();

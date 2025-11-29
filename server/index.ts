@@ -68,6 +68,11 @@ app.use((req, res, next) => {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
+      const setCookie = res.getHeader('Set-Cookie');
+      if (setCookie) {
+        logLine += ` :: [Cookie Set] ${Array.isArray(setCookie) ? setCookie.join('; ') : setCookie}`;
+      }
+
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
       }
