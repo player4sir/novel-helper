@@ -90,7 +90,7 @@ export function setupAuth(app: Express) {
         try {
             const existingUser = await storage.getUserByUsername(req.body.username);
             if (existingUser) {
-                return res.status(400).send("Username already exists");
+                return res.status(400).json({ message: "Username already exists" });
             }
 
             const user = await storage.createUser(req.body.username, req.body.password);
@@ -106,7 +106,7 @@ export function setupAuth(app: Express) {
     app.post("/api/login", (req, res, next) => {
         passport.authenticate("local", (err: any, user: Express.User, info: any) => {
             if (err) return next(err);
-            if (!user) return res.status(400).send(info?.message || "Login failed");
+            if (!user) return res.status(400).json({ message: info?.message || "Login failed" });
             req.login(user, (err) => {
                 if (err) return next(err);
                 res.json(user);

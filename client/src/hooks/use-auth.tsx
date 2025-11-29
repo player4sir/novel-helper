@@ -36,8 +36,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
 
             if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.message || "Login failed");
+                let errorMessage = "登录失败";
+                const responseText = await res.text();
+
+                try {
+                    const error = JSON.parse(responseText);
+                    errorMessage = error.message || errorMessage;
+                } catch {
+                    // If parsing fails, use the raw text if it's not empty
+                    if (responseText) {
+                        errorMessage = responseText;
+                    }
+                }
+
+                // Map to friendly Chinese messages
+                if (errorMessage.includes("Incorrect username")) {
+                    throw new Error("用户名不存在");
+                } else if (errorMessage.includes("Incorrect password")) {
+                    throw new Error("密码错误");
+                } else if (errorMessage.includes("Invalid password format")) {
+                    throw new Error("密码格式错误");
+                }
+
+                throw new Error(errorMessage);
             }
 
             return await res.json();
@@ -67,8 +88,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
 
             if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.message || "Registration failed");
+                let errorMessage = "注册失败";
+                const responseText = await res.text();
+
+                try {
+                    const error = JSON.parse(responseText);
+                    errorMessage = error.message || errorMessage;
+                } catch {
+                    // If parsing fails, use the raw text if it's not empty
+                    if (responseText) {
+                        errorMessage = responseText;
+                    }
+                }
+
+                // Map to friendly Chinese messages
+                if (errorMessage.includes("Username already exists")) {
+                    throw new Error("用户名已存在");
+                }
+
+                throw new Error(errorMessage);
             }
 
             return await res.json();

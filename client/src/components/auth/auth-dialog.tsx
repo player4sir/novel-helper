@@ -150,9 +150,10 @@ function LoginForm({ onSuccess }: { onSuccess: (user?: any) => void }) {
         },
     });
 
-    const onSubmit = async (data: z.infer<typeof loginSchema>) => {
-        const user = await loginMutation.mutateAsync(data);
-        onSuccess(user);
+    const onSubmit = (data: z.infer<typeof loginSchema>) => {
+        loginMutation.mutate(data, {
+            onSuccess: (user: any) => onSuccess(user),
+        });
     };
 
     return (
@@ -223,9 +224,10 @@ function RegisterForm({ onSuccess }: { onSuccess: (user?: any) => void }) {
         },
     });
 
-    const onSubmit = async (data: z.infer<typeof registerSchema>) => {
-        const user = await registerMutation.mutateAsync(data);
-        onSuccess(user);
+    const onSubmit = (data: z.infer<typeof registerSchema>) => {
+        registerMutation.mutate(data, {
+            onSuccess: (user: any) => onSuccess(user),
+        });
     };
 
     return (
