@@ -28,12 +28,12 @@ function createWindow() {
     mainWindow.show();
   });
 
-  const startUrl = isDev 
+  const startUrl = isDev
     ? 'http://localhost:5000'
     : `http://localhost:5000`;
 
   console.log(`Loading URL: ${startUrl}`);
-  
+
   mainWindow.loadURL(startUrl).catch(err => {
     console.error('Failed to load URL:', err);
     // 如果加载失败，显示错误页面
@@ -65,7 +65,7 @@ function startServer() {
   return new Promise((resolve, reject) => {
     // 生产环境：从 app.asar 或 app.asar.unpacked 中获取路径
     let serverPath, workingDir, envPath;
-    
+
     if (isDev) {
       serverPath = path.join(__dirname, '../server/index.ts');
       workingDir = path.join(__dirname, '..');
@@ -76,14 +76,14 @@ function startServer() {
       const appPath = app.getAppPath();
       serverPath = path.join(appPath, 'dist', 'index.js');
       workingDir = appPath;
-      
+
       // .env 文件在 extraResources 中，位于 resources 目录
       const possibleEnvPaths = [
         path.join(process.resourcesPath, '.env'),
         path.join(process.resourcesPath, 'app.asar', '.env'),
         path.join(appPath, '.env'),
       ];
-      
+
       envPath = possibleEnvPaths.find(p => require('fs').existsSync(p)) || possibleEnvPaths[0];
     }
 
@@ -117,9 +117,9 @@ function startServer() {
       // 开发环境：使用 npx tsx
       const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
       const args = ['tsx', serverPath];
-      
+
       console.log(`Starting server (dev): ${command} ${args.join(' ')}`);
-      
+
       serverProcess = spawn(command, args, {
         cwd: workingDir,
         env: {
@@ -134,13 +134,14 @@ function startServer() {
     } else {
       // 生产环境：直接在主进程中加载服务器
       console.log(`Starting server (prod): loading in main process`);
-      
+
       // 设置环境变量
       Object.assign(process.env, envVars, {
         PORT: '5000',
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        ALLOW_INSECURE_COOKIES: 'true'
       });
-      
+
       // 直接 require 服务器代码
       try {
         require(serverPath);
@@ -163,7 +164,7 @@ function startServer() {
       serverProcess.stdout.on('data', (data) => {
         const output = data.toString();
         console.log('[Server stdout]:', output);
-        
+
         // 检测服务器启动成功的标志
         if (output.includes('serving on port') && !serverReady) {
           serverReady = true;
@@ -177,7 +178,7 @@ function startServer() {
       serverProcess.stderr.on('data', (data) => {
         const error = data.toString();
         console.error('[Server stderr]:', error);
-        
+
         // 如果是严重错误，拒绝 Promise
         if (error.includes('Error:') || error.includes('Cannot find module')) {
           reject(new Error(error));
@@ -279,25 +280,25 @@ function checkPort(port) {
   return new Promise((resolve) => {
     const net = require('net');
     const server = net.createServer();
-    
+
     server.once('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         resolve(false);
       }
     });
-    
+
     server.once('listening', () => {
       server.close();
       resolve(true);
     });
-    
+
     server.listen(port);
   });
 }
 
 app.whenReady().then(async () => {
   createMenu();
-  
+
   // 检查端口
   const portAvailable = await checkPort(5000);
   if (!portAvailable) {
@@ -310,7 +311,7 @@ app.whenReady().then(async () => {
       buttons: ['继续', '退出'],
       defaultId: 0
     });
-    
+
     if (result.response === 1) {
       app.quit();
       return;
