@@ -77,14 +77,6 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
-    // Debug logging for deployment issues
-    console.log("=================================");
-    console.log("[Debug] Server Startup Info");
-    console.log(`[Debug] NODE_ENV: ${process.env.NODE_ENV}`);
-    console.log(`[Debug] API_ONLY: ${process.env.API_ONLY}`);
-    console.log(`[Debug] Current Directory: ${process.cwd()}`);
-    console.log("=================================");
-
     // 加载环境变量
     await loadEnvironmentVariables();
 
