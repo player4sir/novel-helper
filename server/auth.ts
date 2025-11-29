@@ -36,12 +36,14 @@ export function setupAuth(app: Express) {
     };
 
     if (app.get("env") === "production") {
-        app.set("trust proxy", 1); // trust first proxy
+        app.set("trust proxy", true); // Trust all proxies (Zeabur likely has multiple layers)
     }
 
     app.use(session(sessionSettings));
     app.use(passport.initialize());
     app.use(passport.session());
+
+    // ... (passport strategy remains the same)
 
     passport.use(
         new LocalStrategy(async (username, password, done) => {
@@ -105,11 +107,15 @@ export function setupAuth(app: Express) {
     });
 
     app.post("/api/login", (req, res, next) => {
+        // Debug logging for auth issues
+        console.log(`[Auth Debug] Login attempt. Protocol: ${req.protocol}, Secure: ${req.secure}, IPs: ${req.ips}`);
+
         passport.authenticate("local", (err: any, user: Express.User, info: any) => {
             if (err) return next(err);
             if (!user) return res.status(400).json({ message: info?.message || "Login failed" });
             req.login(user, (err) => {
                 if (err) return next(err);
+                console.log(`[Auth Debug] Login successful for user ${user.username}. Session ID: ${req.sessionID}`);
                 res.json(user);
             });
         })(req, res, next);
