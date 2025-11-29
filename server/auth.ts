@@ -28,6 +28,7 @@ export function setupAuth(app: Express) {
         resave: false,
         saveUninitialized: false,
         store: storage.sessionStore,
+        proxy: true, // Required for secure cookies behind proxy
         cookie: {
             maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
             secure: process.env.NODE_ENV === "production",
@@ -42,8 +43,6 @@ export function setupAuth(app: Express) {
     app.use(session(sessionSettings));
     app.use(passport.initialize());
     app.use(passport.session());
-
-    // ... (passport strategy remains the same)
 
     passport.use(
         new LocalStrategy(async (username, password, done) => {
@@ -118,6 +117,11 @@ export function setupAuth(app: Express) {
             req.login(user, (err) => {
                 if (err) return next(err);
                 console.log(`[Auth Debug] Login successful for user ${user.username}. Session ID: ${req.sessionID}`);
+
+                // Log the Set-Cookie header to verify attributes
+                const setCookie = res.getHeader('Set-Cookie');
+                console.log(`[Auth Debug] Set-Cookie Header:`, setCookie);
+
                 res.json(user);
             });
         })(req, res, next);
